@@ -3,6 +3,15 @@
 
 #include "framework.h"
 #include "3DGP_Assignment3.h"
+#include "GameFramework.h"
+
+// 마우스 좌표 추출 매크로를 사용합니다.
+#include <windowsx.h>
+
+// 표준 시간/메모리/예외 처리는 게임 루프와 오류 보고에 사용합니다.
+#include <chrono>
+#include <memory>
+#include <stdexcept>
 
 #define MAX_LOADSTRING 100
 
@@ -10,6 +19,8 @@
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
+HWND g_hWnd = nullptr;                          // D3D12가 렌더링할 주 창입니다.
+std::unique_ptr<AssignmentGame> g_game;          // 과제 3 게임 객체입니다.
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -25,8 +36,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    // TODO: 여기에 코드를 입력합니다.
-
     // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_MY3DGPASSIGNMENT3, szWindowClass, MAX_LOADSTRING);
@@ -38,19 +47,42 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         return FALSE;
     }
 
-    HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_MY3DGPASSIGNMENT3));
-
-    MSG msg;
-
-    // 기본 메시지 루프입니다:
-    while (GetMessage(&msg, nullptr, 0, 0))
+    // D3D12 렌더러와 게임 상태를 생성합니다.
+    try
     {
-        if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
+        RECT clientRect{};
+        GetClientRect(g_hWnd, &clientRect);
+        g_game = std::make_unique<AssignmentGame>();
+        g_game->Initialize(g_hWnd, static_cast<UINT>(clientRect.right - clientRect.left), static_cast<UINT>(clientRect.bottom - clientRect.top));
+    }
+    catch (const std::exception& e)
+    {
+        MessageBoxA(g_hWnd, e.what(), "초기화 오류", MB_ICONERROR | MB_OK);
+        return FALSE;
+    }
+
+    MSG msg{};
+    auto previousTime = std::chrono::steady_clock::now();
+
+    // PeekMessage 기반 루프를 사용해 메시지가 없을 때도 매 프레임 렌더링합니다.
+    while (msg.message != WM_QUIT)
+    {
+        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
+        else if (g_game)
+        {
+            const auto currentTime = std::chrono::steady_clock::now();
+            const float deltaSeconds = std::chrono::duration<float>(currentTime - previousTime).count();
+            previousTime = currentTime;
+            g_game->Tick(deltaSeconds);
+        }
     }
+
+    // 창이 닫힌 뒤 GPU 리소스를 정리합니다.
+    g_game.reset();
 
     return (int) msg.wParam;
 }
@@ -75,8 +107,8 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     wcex.hInstance      = hInstance;
     wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MY3DGPASSIGNMENT3));
     wcex.hCursor        = LoadCursor(nullptr, IDC_ARROW);
-    wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
-    wcex.lpszMenuName   = MAKEINTRESOURCEW(IDC_MY3DGPASSIGNMENT3);
+    wcex.hbrBackground  = nullptr;
+    wcex.lpszMenuName   = nullptr;
     wcex.lpszClassName  = szWindowClass;
     wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
 
@@ -97,14 +129,18 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
    hInst = hInstance; // 인스턴스 핸들을 전역 변수에 저장합니다.
 
+   // 과제 실행 화면은 16:9 기본 해상도로 생성합니다.
+   RECT windowRect{ 0, 0, 1280, 720 };
+   AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
+      CW_USEDEFAULT, 0, windowRect.right - windowRect.left, windowRect.bottom - windowRect.top, nullptr, nullptr, hInstance, nullptr);
 
    if (!hWnd)
    {
       return FALSE;
    }
 
+   g_hWnd = hWnd;
    ShowWindow(hWnd, nCmdShow);
    UpdateWindow(hWnd);
 
@@ -126,27 +162,53 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     switch (message)
     {
     case WM_COMMAND:
+        // 리소스 메뉴를 사용하지 않지만 기본 명령 처리는 남겨 둡니다.
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    case WM_SIZE:
+        // 창 크기 변경을 D3D12 백 버퍼 재생성으로 전달합니다.
+        if (g_game)
         {
-            int wmId = LOWORD(wParam);
-            // 메뉴 선택을 구문 분석합니다:
-            switch (wmId)
-            {
-            case IDM_ABOUT:
-                DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-                break;
-            case IDM_EXIT:
-                DestroyWindow(hWnd);
-                break;
-            default:
-                return DefWindowProc(hWnd, message, wParam, lParam);
-            }
+            g_game->OnResize(LOWORD(lParam), HIWORD(lParam));
         }
+        break;
+    case WM_KEYDOWN:
+        // 반복 입력도 이동에는 유효하므로 게임 객체로 전달합니다.
+        if (g_game)
+        {
+            g_game->OnKeyDown(wParam);
+        }
+        break;
+    case WM_KEYUP:
+        // 키를 떼면 이동 상태를 해제합니다.
+        if (g_game)
+        {
+            g_game->OnKeyUp(wParam);
+        }
+        break;
+    case WM_MOUSEMOVE:
+        // 마우스 위치는 메뉴 hover와 선택에 사용합니다.
+        if (g_game)
+        {
+            g_game->OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        }
+        break;
+    case WM_LBUTTONDOWN:
+        // 왼쪽 클릭은 시작 이름 또는 메뉴 항목 선택입니다.
+        SetCapture(hWnd);
+        if (g_game)
+        {
+            g_game->OnMouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        }
+        break;
+    case WM_LBUTTONUP:
+        // 클릭 드래그가 끝나면 마우스 캡처를 해제합니다.
+        ReleaseCapture();
         break;
     case WM_PAINT:
         {
             PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
+            BeginPaint(hWnd, &ps);
+            // 실제 화면 출력은 D3D12 렌더 루프에서 수행합니다.
             EndPaint(hWnd, &ps);
         }
         break;

@@ -1,0 +1,796 @@
+﻿#include "GameFramework.h"
+
+#include "Collision.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cwctype>
+#include <limits>
+#include <string_view>
+#include <unordered_map>
+
+using namespace DirectX;
+
+
+namespace
+{
+    // 파이 값은 회전 애니메이션과 카메라 계산에 사용합니다.
+    constexpr float Pi = 3.1415926535f;
+
+    // 5x7 도트 글리프 하나를 표현하는 타입입니다.
+    using GlyphPattern = std::array<std::string_view, 7>;
+
+    // 기본 글리프는 알 수 없는 문자를 물음표 모양의 3D 블록으로 표시합니다.
+    const GlyphPattern FallbackGlyph =
+    {
+        "11110",
+        "00001",
+        "00001",
+        "01110",
+        "00100",
+        "00000",
+        "00100"
+    };
+
+    // ASCII와 과제 제목에 필요한 일부 한글 글리프를 5x7 도트로 정의합니다.
+    const std::unordered_map<wchar_t, GlyphPattern>& GlyphTable()
+    {
+        static const std::unordered_map<wchar_t, GlyphPattern> table =
+        {
+            { L'0', { "11111", "10001", "10011", "10101", "11001", "10001", "11111" } },
+            { L'1', { "00100", "01100", "00100", "00100", "00100", "00100", "01110" } },
+            { L'2', { "11110", "00001", "00001", "11110", "10000", "10000", "11111" } },
+            { L'3', { "11110", "00001", "00001", "01110", "00001", "00001", "11110" } },
+            { L'4', { "10010", "10010", "10010", "11111", "00010", "00010", "00010" } },
+            { L'5', { "11111", "10000", "10000", "11110", "00001", "00001", "11110" } },
+            { L'6', { "01111", "10000", "10000", "11110", "10001", "10001", "01110" } },
+            { L'7', { "11111", "00001", "00010", "00100", "01000", "01000", "01000" } },
+            { L'8', { "01110", "10001", "10001", "01110", "10001", "10001", "01110" } },
+            { L'9', { "01110", "10001", "10001", "01111", "00001", "00001", "11110" } },
+            { L'A', { "01110", "10001", "10001", "11111", "10001", "10001", "10001" } },
+            { L'B', { "11110", "10001", "10001", "11110", "10001", "10001", "11110" } },
+            { L'C', { "01111", "10000", "10000", "10000", "10000", "10000", "01111" } },
+            { L'D', { "11110", "10001", "10001", "10001", "10001", "10001", "11110" } },
+            { L'E', { "11111", "10000", "10000", "11110", "10000", "10000", "11111" } },
+            { L'F', { "11111", "10000", "10000", "11110", "10000", "10000", "10000" } },
+            { L'G', { "01111", "10000", "10000", "10011", "10001", "10001", "01111" } },
+            { L'H', { "10001", "10001", "10001", "11111", "10001", "10001", "10001" } },
+            { L'I', { "11111", "00100", "00100", "00100", "00100", "00100", "11111" } },
+            { L'J', { "00111", "00010", "00010", "00010", "10010", "10010", "01100" } },
+            { L'K', { "10001", "10010", "10100", "11000", "10100", "10010", "10001" } },
+            { L'L', { "10000", "10000", "10000", "10000", "10000", "10000", "11111" } },
+            { L'M', { "10001", "11011", "10101", "10101", "10001", "10001", "10001" } },
+            { L'N', { "10001", "11001", "10101", "10011", "10001", "10001", "10001" } },
+            { L'O', { "01110", "10001", "10001", "10001", "10001", "10001", "01110" } },
+            { L'P', { "11110", "10001", "10001", "11110", "10000", "10000", "10000" } },
+            { L'Q', { "01110", "10001", "10001", "10001", "10101", "10010", "01101" } },
+            { L'R', { "11110", "10001", "10001", "11110", "10100", "10010", "10001" } },
+            { L'S', { "01111", "10000", "10000", "01110", "00001", "00001", "11110" } },
+            { L'T', { "11111", "00100", "00100", "00100", "00100", "00100", "00100" } },
+            { L'U', { "10001", "10001", "10001", "10001", "10001", "10001", "01110" } },
+            { L'V', { "10001", "10001", "10001", "10001", "10001", "01010", "00100" } },
+            { L'W', { "10001", "10001", "10001", "10101", "10101", "10101", "01010" } },
+            { L'X', { "10001", "10001", "01010", "00100", "01010", "10001", "10001" } },
+            { L'Y', { "10001", "10001", "01010", "00100", "00100", "00100", "00100" } },
+            { L'Z', { "11111", "00001", "00010", "00100", "01000", "10000", "11111" } },
+            { L'-', { "00000", "00000", "00000", "11111", "00000", "00000", "00000" } },
+            { L':', { "00000", "00100", "00100", "00000", "00100", "00100", "00000" } },
+            { L'게', { "1111001", "0001001", "0001001", "1111001", "1000001", "1111001", "0000001" } },
+            { L'임', { "0111010", "1000110", "1000110", "0111010", "1111110", "1000010", "1111110" } },
+            { L'프', { "1111110", "1000010", "1111110", "0000000", "1111111", "0010000", "0010000" } },
+            { L'로', { "1111110", "0000010", "1111110", "1000000", "1111111", "0000000", "1111111" } },
+            { L'그', { "1111111", "1000000", "1000000", "1111111", "0000000", "1111111", "0010000" } },
+            { L'래', { "1111001", "0001001", "1111001", "1000001", "1111001", "1000001", "1111001" } },
+            { L'밍', { "0111010", "1000110", "0111010", "1111110", "1000010", "1000010", "1111110" } },
+            { L'이', { "0111110", "0010000", "0010000", "0010000", "0010000", "0010000", "0111110" } },
+            { L'름', { "1111110", "1000010", "1111110", "1000000", "1111111", "1000010", "1111110" } }
+        };
+
+        return table;
+    }
+
+    // 글리프 테이블에서 문자를 찾고 없으면 기본 글리프를 반환합니다.
+    const GlyphPattern& FindGlyph(wchar_t ch)
+    {
+        const auto& table = GlyphTable();
+        const auto found = table.find(static_cast<wchar_t>(std::towupper(ch)));
+        if (found != table.end())
+        {
+            return found->second;
+        }
+
+        const auto original = table.find(ch);
+        if (original != table.end())
+        {
+            return original->second;
+        }
+
+        return FallbackGlyph;
+    }
+
+    // 글리프마다 실제 폭이 다를 수 있으므로 행 문자열의 최대 길이를 폭으로 사용합니다.
+    float GlyphWidth(const GlyphPattern& glyph)
+    {
+        std::size_t width = 0;
+        for (const std::string_view row : glyph)
+        {
+            width = std::max(width, row.size());
+        }
+
+        return static_cast<float>(width);
+    }
+
+    // 두 3D 벡터를 더합니다.
+    XMFLOAT3 AddVector(const XMFLOAT3& a, const XMFLOAT3& b)
+    {
+        return { a.x + b.x, a.y + b.y, a.z + b.z };
+    }
+
+    // 3D 벡터에 스칼라를 곱합니다.
+    XMFLOAT3 ScaleVector(const XMFLOAT3& v, float scale)
+    {
+        return { v.x * scale, v.y * scale, v.z * scale };
+    }
+
+    // 두 점 사이의 제곱 거리를 계산해 충돌 검사에 사용합니다.
+    float DistanceSquared(const XMFLOAT3& a, const XMFLOAT3& b)
+    {
+        const float dx = a.x - b.x;
+        const float dy = a.y - b.y;
+        const float dz = a.z - b.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    // 선형 보간 후 정규화하여 급격하지 않은 방향 전환에 사용합니다.
+    XMFLOAT3 BlendDirection(const XMFLOAT3& from, const XMFLOAT3& to, float amount)
+    {
+        const float t = std::clamp(amount, 0.0f, 1.0f);
+        return Collision::Normalize(
+            {
+                from.x + (to.x - from.x) * t,
+                from.y + (to.y - from.y) * t,
+                from.z + (to.z - from.z) * t
+            });
+    }
+
+    // 상수 버퍼 크기를 D3D12가 요구하는 256바이트 단위로 올림합니다.
+    UINT AlignConstantBufferSize(UINT byteSize)
+    {
+        constexpr UINT alignment = 256;
+        return (byteSize + alignment - 1) & ~(alignment - 1);
+    }
+}
+
+void AssignmentGame::Update(float deltaSeconds)
+{
+    // 씬별로 필요한 시뮬레이션만 수행합니다.
+    switch (m_scene)
+    {
+    case SceneMode::Start:
+        UpdateStart(deltaSeconds);
+        break;
+    case SceneMode::Menu:
+        break;
+    case SceneMode::Level1:
+        UpdateLevel(deltaSeconds);
+        break;
+    }
+}
+
+void AssignmentGame::UpdateStart(float deltaSeconds)
+{
+    // 이름 폭발 애니메이션이 끝나면 메뉴로 전환합니다.
+    if (m_nameExploding)
+    {
+        m_nameExplosionTime += deltaSeconds;
+        if (m_nameExplosionTime > 1.25f)
+        {
+            m_scene = SceneMode::Menu;
+            m_nameExploding = false;
+            m_nameExplosionTime = 0.0f;
+        }
+    }
+}
+
+void AssignmentGame::UpdateLevel(float deltaSeconds)
+{
+    // 이동은 수평 yaw 방향을 기준으로 하고, pitch는 마우스 조준에만 사용합니다.
+    const XMFLOAT3 forward{ std::sinf(m_helicopterYaw), 0.0f, std::cosf(m_helicopterYaw) };
+    const XMFLOAT3 right{ std::cosf(m_helicopterYaw), 0.0f, -std::sinf(m_helicopterYaw) };
+    constexpr float moveSpeed = 18.0f * GP_WORLD_UNITS_PER_METER;
+
+    // WASD는 헬리콥터의 수평 이동을 담당합니다.
+    if (m_keyDown['W'])
+    {
+        m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(forward, moveSpeed * deltaSeconds));
+    }
+    if (m_keyDown['S'])
+    {
+        m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(forward, -moveSpeed * deltaSeconds));
+    }
+    if (m_keyDown['A'])
+    {
+        m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(right, -moveSpeed * deltaSeconds));
+    }
+    if (m_keyDown['D'])
+    {
+        m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(right, moveSpeed * deltaSeconds));
+    }
+
+    // Space는 상승, 왼쪽 Ctrl은 하강입니다.
+    if (m_keyDown[VK_SPACE])
+    {
+        m_helicopterPosition.y += moveSpeed * 0.55f * deltaSeconds;
+    }
+    if (m_keyDown[VK_CONTROL] || m_keyDown[VK_LCONTROL])
+    {
+        m_helicopterPosition.y -= moveSpeed * 0.55f * deltaSeconds;
+    }
+    m_helicopterPosition.y = std::clamp(m_helicopterPosition.y, 0.9f, 30.0f * GP_WORLD_UNITS_PER_METER);
+
+    // 지형 바깥으로 너무 멀리 나가지 않도록 위치를 제한합니다.
+    constexpr float movementLimit = GP_TERRAIN_HALF_SIZE_METERS - 5.0f;
+    m_helicopterPosition.x = std::clamp(m_helicopterPosition.x, -movementLimit, movementLimit);
+    m_helicopterPosition.z = std::clamp(m_helicopterPosition.z, -movementLimit, movementLimit);
+
+    // 로터는 시간이 지날수록 빠르게 회전합니다.
+    m_rotorAngle += 22.0f * deltaSeconds;
+
+    // 발사는 마우스 클릭에서 처리되며, 여기서는 쿨다운만 줄입니다.
+    m_shotCooldown = std::max(0.0f, m_shotCooldown - deltaSeconds);
+
+    // 미사일을 이동시키고, 락온 미사일은 목표를 향해 제한된 속도로 선회합니다.
+    for (Bullet& bullet : m_bullets)
+    {
+        const float currentSpeed = std::sqrt(std::max(0.0001f, DistanceSquared(bullet.velocity, { 0.0f, 0.0f, 0.0f })));
+        if (bullet.homing && IsTargetIndexValid(bullet.targetIndex))
+        {
+            const Target& target = m_targets[static_cast<std::size_t>(bullet.targetIndex)];
+            const XMFLOAT3 targetPoint{ target.position.x, target.position.y + 0.65f, target.position.z };
+            const XMFLOAT3 desiredDirection = Collision::Normalize(
+                {
+                    targetPoint.x - bullet.position.x,
+                    targetPoint.y - bullet.position.y,
+                    targetPoint.z - bullet.position.z
+                });
+            const XMFLOAT3 currentDirection = Collision::Normalize(bullet.velocity);
+            const float turnRateRadians = 1.45f;
+            const float dot = std::clamp(Collision::Dot(currentDirection, desiredDirection), -1.0f, 1.0f);
+            const float angle = std::acos(dot);
+            const float blend = (angle <= 0.0001f) ? 1.0f : std::min(1.0f, (turnRateRadians * deltaSeconds) / angle);
+            const XMFLOAT3 newDirection = BlendDirection(currentDirection, desiredDirection, blend);
+            bullet.velocity = ScaleVector(newDirection, currentSpeed);
+        }
+
+        bullet.position = AddVector(bullet.position, ScaleVector(bullet.velocity, deltaSeconds));
+        bullet.lifeSeconds -= deltaSeconds;
+    }
+    std::erase_if(m_bullets, [](const Bullet& bullet)
+    {
+        return bullet.lifeSeconds <= 0.0f;
+    });
+
+    // 탄환과 표적의 간단한 구형 충돌을 검사합니다.
+    for (Bullet& bullet : m_bullets)
+    {
+        for (Target& target : m_targets)
+        {
+            const float hitRadius = bullet.homing ? 4.0f : 1.8f;
+            if (target.active && DistanceSquared(bullet.position, target.position) < hitRadius * hitRadius)
+            {
+                target.active = false;
+                bullet.lifeSeconds = 0.0f;
+                break;
+            }
+        }
+    }
+    std::erase_if(m_bullets, [](const Bullet& bullet)
+    {
+        return bullet.lifeSeconds <= 0.0f;
+    });
+
+    // 현재 총구 광선이 맞는 지형 또는 오브젝트 위치를 갱신합니다.
+    UpdateAimRay();
+}
+
+void AssignmentGame::UpdateAimRay()
+{
+    // 헬리콥터 총구에서 현재 yaw/pitch 방향으로 광선을 쏩니다.
+    constexpr float maxAimDistance = GP_TERRAIN_HALF_SIZE_METERS * 2.0f;
+    m_aimDirection = ForwardDirection();
+    const Collision::Ray ray{ MuzzlePosition(), m_aimDirection };
+
+    Collision::HitResult bestHit{};
+    bestHit.distance = maxAimDistance;
+    int hitTargetIndex = -1;
+    int lockCandidateIndex = -1;
+    float bestLockScore = -1.0f;
+
+    // 살아 있는 표적을 검사하고 가장 가까운 충돌점을 선택합니다.
+    for (std::size_t targetIndex = 0; targetIndex < m_targets.size(); ++targetIndex)
+    {
+        const Target& target = m_targets[targetIndex];
+        if (!target.active)
+        {
+            continue;
+        }
+
+        const XMFLOAT3 targetPoint{ target.position.x, target.position.y + 0.65f, target.position.z };
+        const XMFLOAT3 toTarget
+        {
+            targetPoint.x - ray.origin.x,
+            targetPoint.y - ray.origin.y,
+            targetPoint.z - ray.origin.z
+        };
+        const float targetDistance = std::sqrt(std::max(0.0001f, DistanceSquared(targetPoint, ray.origin)));
+        const XMFLOAT3 targetDirection = Collision::Normalize(toTarget);
+        const float aimDot = Collision::Dot(targetDirection, ray.direction);
+        if (aimDot > 0.975f && targetDistance < maxAimDistance)
+        {
+            const float lockScore = aimDot - targetDistance * 0.0008f;
+            if (lockScore > bestLockScore)
+            {
+                bestLockScore = lockScore;
+                lockCandidateIndex = static_cast<int>(targetIndex);
+            }
+        }
+
+        const Collision::HitResult objectHit = Collision::RaycastSphere(ray, targetPoint, 1.9f, bestHit.distance);
+        if (objectHit.hit)
+        {
+            bestHit = objectHit;
+            hitTargetIndex = static_cast<int>(targetIndex);
+        }
+    }
+
+    // 직접 맞춘 표적을 최우선으로 락온하고, 아니면 조준 콘 안의 표적을 락온합니다.
+    m_lockedTargetIndex = (hitTargetIndex >= 0) ? hitTargetIndex : lockCandidateIndex;
+
+    // 지형은 현재 평면이므로 y=0 평면과의 교차점을 사용합니다.
+    const Collision::HitResult terrainHit = Collision::RaycastPlaneY(ray, 0.0f, bestHit.distance);
+    if (terrainHit.hit)
+    {
+        bestHit = terrainHit;
+    }
+
+    // 아무것도 맞지 않으면 먼 곳에 표시하여 탄환 방향을 계속 보여 줍니다.
+    if (!bestHit.hit)
+    {
+        bestHit.hit = true;
+        bestHit.distance = maxAimDistance;
+        bestHit.position = Collision::PointAt(ray, maxAimDistance);
+    }
+
+    m_crosshairValid = bestHit.hit;
+    m_crosshairPosition = bestHit.position;
+}
+
+void AssignmentGame::FireBulletAtAim()
+{
+    // 빠른 연사를 막기 위해 간단한 쿨다운을 둡니다.
+    if (m_shotCooldown > 0.0f)
+    {
+        return;
+    }
+
+    UpdateAimRay();
+    const XMFLOAT3 muzzle = MuzzlePosition();
+    const XMFLOAT3 launchDirection = ForwardDirection();
+
+    Bullet bullet{};
+    bullet.position = muzzle;
+    // 락온 상태여도 미사일은 먼저 헬기 전방으로 발사되고, 이후 자체 회전으로 목표를 추적합니다.
+    bullet.velocity = Collision::Scale(launchDirection, 55.0f * GP_WORLD_UNITS_PER_METER);
+    bullet.lifeSeconds = 8.0f;
+    bullet.homing = IsTargetIndexValid(m_lockedTargetIndex);
+    bullet.targetIndex = bullet.homing ? m_lockedTargetIndex : -1;
+    m_bullets.push_back(bullet);
+    m_shotCooldown = 0.18f;
+}
+
+void AssignmentGame::BuildDrawItems()
+{
+    // 프레임마다 현재 씬에 필요한 도형만 새로 채웁니다.
+    m_drawItems.clear();
+    m_drawItems.reserve(1024);
+
+    switch (m_scene)
+    {
+    case SceneMode::Start:
+        BuildStartScene();
+        break;
+    case SceneMode::Menu:
+        BuildMenuScene();
+        break;
+    case SceneMode::Level1:
+        BuildLevelScene();
+        break;
+    }
+}
+
+void AssignmentGame::BuildStartScene()
+{
+    // 시작 화면 제목은 판독성을 위해 ASCII 3D 블록 글씨로 렌더링합니다.
+    AddText3D(L"3D GAME PROGRAMMING 1", { 0.0f, 1.35f, 0.0f }, 0.090f, 0.13f, { 0.65f, 0.88f, 1.0f, 1.0f });
+
+    // 플레이 버튼은 3D 글씨이며, 클릭하면 메뉴 화면으로 전환됩니다.
+    const float nameYaw = m_totalTime * 1.7f;
+    if (m_nameExploding)
+    {
+        AddExplodingText3D(L"PLAY", { 0.0f, -0.55f, 0.0f }, 0.20f, 0.20f, { 1.0f, 0.82f, 0.20f, 1.0f }, nameYaw, m_nameExplosionTime);
+    }
+    else
+    {
+        AddText3D(L"PLAY", { 0.0f, -0.55f, 0.0f }, 0.20f, 0.20f, { 1.0f, 0.82f, 0.20f, 1.0f }, nameYaw);
+    }
+
+    // 마우스 선택 대상을 알려주는 보조 문구도 3D로 배치합니다.
+    AddText3D(L"CLICK PLAY", { 0.0f, -2.1f, 0.0f }, 0.10f, 0.10f, { 0.78f, 0.80f, 0.86f, 1.0f });
+}
+
+void AssignmentGame::BuildMenuScene()
+{
+    // 메뉴 제목과 항목은 전부 3D 큐브 글씨로 렌더링합니다.
+    AddText3D(L"MENU", { 0.0f, 2.2f, 0.0f }, 0.14f, 0.14f, { 0.85f, 0.95f, 1.0f, 1.0f });
+
+    for (const MenuEntry& entry : m_menuEntries)
+    {
+        const int hoveredIndex = HitMenuEntry(m_mouseX, m_mouseY);
+        const bool hovered = hoveredIndex >= 0 && m_menuEntries[hoveredIndex].label == entry.label;
+        const XMFLOAT4 color = hovered ? XMFLOAT4{ 1.0f, 0.82f, 0.25f, 1.0f } : XMFLOAT4{ 0.68f, 0.86f, 0.95f, 1.0f };
+        AddText3D(entry.label, { 0.0f, entry.y, 0.0f }, 0.082f, 0.10f, color);
+    }
+}
+
+void AssignmentGame::BuildLevelScene()
+{
+    // 지형 메시 하나를 월드 원점에 놓고, PPT 방식 그리드가 그대로 보이게 색을 유지합니다.
+    DrawItem terrainItem{};
+    terrainItem.mesh = MeshKind::Terrain;
+    XMStoreFloat4x4(&terrainItem.world, XMMatrixIdentity());
+    terrainItem.color = { 1.0f, 1.0f, 1.0f, 1.0f };
+    m_drawItems.push_back(terrainItem);
+
+    // 헬리콥터와 슈팅 오브젝트를 임시 박스 모델로 렌더링합니다.
+    AddHelicopter();
+    AddTargets();
+    AddBullets();
+    AddCrosshair();
+    AddLockOnIndicator();
+}
+
+void AssignmentGame::AddHelicopter()
+{
+    // 부모 행렬은 헬리콥터 전체를 현재 위치와 방향으로 이동시킵니다.
+    const XMMATRIX parent = XMMatrixRotationRollPitchYaw(-m_helicopterPitch * 0.45f, m_helicopterYaw, 0.0f) * XMMatrixTranslation(m_helicopterPosition.x, m_helicopterPosition.y, m_helicopterPosition.z);
+
+    // 헬리콥터 본체는 현재 사각형 박스지만, 나중에 모델 메시로 교체하기 쉽도록 한 함수에 모았습니다.
+    auto addPart = [this, parent](const XMFLOAT3& localPosition, const XMFLOAT3& size, const XMFLOAT4& color, const XMMATRIX& localRotation = XMMatrixIdentity())
+    {
+        const XMMATRIX world = XMMatrixScaling(size.x, size.y, size.z) * localRotation * XMMatrixTranslation(localPosition.x, localPosition.y, localPosition.z) * parent;
+        AddBoxWithWorld(world, color);
+    };
+
+    addPart({ 0.0f, 0.0f, 0.0f }, { 1.15f, 0.45f, 1.85f }, { 0.12f, 0.38f, 0.92f, 1.0f });
+    addPart({ 0.0f, 0.08f, 0.65f }, { 0.82f, 0.38f, 0.65f }, { 0.45f, 0.88f, 1.0f, 1.0f });
+    addPart({ 0.0f, 0.03f, -1.55f }, { 0.24f, 0.24f, 1.75f }, { 0.10f, 0.22f, 0.58f, 1.0f });
+    addPart({ 0.0f, 0.02f, -2.55f }, { 0.48f, 0.48f, 0.12f }, { 0.16f, 0.28f, 0.70f, 1.0f });
+
+    // 메인 로터와 꼬리 로터는 회전하는 얇은 박스로 표현합니다.
+    addPart({ 0.0f, 0.48f, 0.0f }, { 3.25f, 0.05f, 0.14f }, { 0.95f, 0.95f, 0.98f, 1.0f }, XMMatrixRotationY(m_rotorAngle));
+    addPart({ 0.0f, 0.49f, 0.0f }, { 0.14f, 0.05f, 3.25f }, { 0.95f, 0.95f, 0.98f, 1.0f }, XMMatrixRotationY(m_rotorAngle));
+    // 꼬리 로터는 꼬리축 방향이 아니라 측면을 향하도록 90도 돌린 YZ 평면에서 회전시킵니다.
+    addPart({ 0.34f, 0.02f, -2.72f }, { 0.08f, 0.85f, 0.10f }, { 0.95f, 0.92f, 0.75f, 1.0f }, XMMatrixRotationX(m_rotorAngle * 1.7f));
+    addPart({ 0.34f, 0.02f, -2.72f }, { 0.08f, 0.10f, 0.85f }, { 0.95f, 0.92f, 0.75f, 1.0f }, XMMatrixRotationX(m_rotorAngle * 1.7f));
+    addPart({ 0.0f, -0.02f, 1.35f }, { 0.18f, 0.18f, 0.50f }, { 0.08f, 0.08f, 0.10f, 1.0f });
+
+    // 착륙 스키드는 박스 두 개와 지지대 네 개로 구성합니다.
+    addPart({ -0.48f, -0.48f, 0.1f }, { 0.10f, 0.08f, 1.65f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+    addPart({ 0.48f, -0.48f, 0.1f }, { 0.10f, 0.08f, 1.65f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+    addPart({ -0.35f, -0.27f, 0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+    addPart({ 0.35f, -0.27f, 0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+    addPart({ -0.35f, -0.27f, -0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+    addPart({ 0.35f, -0.27f, -0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+}
+
+void AssignmentGame::AddTargets()
+{
+    // 살아 있는 표적만 붉은 3D 박스로 그립니다.
+    for (const Target& target : m_targets)
+    {
+        if (!target.active)
+        {
+            continue;
+        }
+
+        AddBox(target.position, { 1.0f, 1.6f, 1.0f }, { 0.86f, 0.18f, 0.16f, 1.0f }, m_totalTime * 0.5f);
+    }
+}
+
+void AssignmentGame::AddBullets()
+{
+    // 탄환은 작고 밝은 큐브로 표현합니다.
+    for (const Bullet& bullet : m_bullets)
+    {
+        const XMFLOAT3 direction = Collision::Normalize(bullet.velocity);
+        const float yaw = std::atan2(direction.x, direction.z);
+        const float pitch = std::asin(std::clamp(direction.y, -1.0f, 1.0f));
+        const float visualScale = ScreenConstantScaleAt(bullet.position, 0.012f);
+        const XMFLOAT4 color = bullet.homing ? XMFLOAT4{ 1.0f, 0.38f, 0.12f, 1.0f } : XMFLOAT4{ 1.0f, 0.95f, 0.35f, 1.0f };
+        AddBox(bullet.position, { visualScale * 0.45f, visualScale * 0.45f, visualScale * 1.20f }, color, yaw, -pitch, 0.0f);
+    }
+}
+
+void AssignmentGame::AddCrosshair()
+{
+    // 조준 광선 계산 결과가 없으면 크로스헤어를 표시하지 않습니다.
+    if (!m_crosshairValid)
+    {
+        return;
+    }
+
+    // 충돌 위치에는 3D 십자 표시를 배치하여 탄환이 날아갈 지점을 보여 줍니다.
+    const XMFLOAT3 p{ m_crosshairPosition.x, m_crosshairPosition.y + 0.05f, m_crosshairPosition.z };
+    const float markerSize = ScreenConstantScaleAt(p, 0.035f);
+    const float markerThickness = std::max(0.10f, markerSize * 0.08f);
+    AddBox(p, { markerSize, markerThickness, markerThickness }, { 1.0f, 0.12f, 0.10f, 1.0f });
+    AddBox(p, { markerThickness, markerSize, markerThickness }, { 1.0f, 0.12f, 0.10f, 1.0f });
+    AddBox(p, { markerThickness, markerThickness, markerSize }, { 1.0f, 0.12f, 0.10f, 1.0f });
+}
+
+void AssignmentGame::AddLockOnIndicator()
+{
+    // 락온 대상에는 거리와 관계없이 잘 보이는 노란 3D 브래킷을 표시합니다.
+    if (!IsTargetIndexValid(m_lockedTargetIndex))
+    {
+        return;
+    }
+
+    const Target& target = m_targets[static_cast<std::size_t>(m_lockedTargetIndex)];
+    const XMFLOAT3 center{ target.position.x, target.position.y + 1.15f, target.position.z };
+    const float size = ScreenConstantScaleAt(center, 0.050f);
+    const float thickness = std::max(0.12f, size * 0.075f);
+    const float half = size * 0.65f;
+    const float segment = size * 0.42f;
+    const XMFLOAT4 lockColor{ 1.0f, 0.86f, 0.08f, 1.0f };
+
+    AddBox({ center.x - half, center.y + half, center.z }, { thickness, segment, thickness }, lockColor);
+    AddBox({ center.x - half + segment * 0.5f, center.y + half, center.z }, { segment, thickness, thickness }, lockColor);
+    AddBox({ center.x + half, center.y + half, center.z }, { thickness, segment, thickness }, lockColor);
+    AddBox({ center.x + half - segment * 0.5f, center.y + half, center.z }, { segment, thickness, thickness }, lockColor);
+    AddBox({ center.x - half, center.y - half, center.z }, { thickness, segment, thickness }, lockColor);
+    AddBox({ center.x - half + segment * 0.5f, center.y - half, center.z }, { segment, thickness, thickness }, lockColor);
+    AddBox({ center.x + half, center.y - half, center.z }, { thickness, segment, thickness }, lockColor);
+    AddBox({ center.x + half - segment * 0.5f, center.y - half, center.z }, { segment, thickness, thickness }, lockColor);
+}
+
+void AssignmentGame::AddBox(const XMFLOAT3& center, const XMFLOAT3& size, const XMFLOAT4& color, float yaw, float pitch, float roll)
+{
+    // 크기, 회전, 이동 순서로 월드 행렬을 만들어 큐브 메시를 박스로 바꿉니다.
+    const XMMATRIX world = XMMatrixScaling(size.x, size.y, size.z) * XMMatrixRotationRollPitchYaw(pitch, yaw, roll) * XMMatrixTranslation(center.x, center.y, center.z);
+    AddBoxWithWorld(world, color);
+}
+
+void AssignmentGame::AddBoxWithWorld(const XMMATRIX& world, const XMFLOAT4& color)
+{
+    // 실제 그리기는 렌더 단계에서 수행되므로 여기서는 DrawItem만 저장합니다.
+    if (m_drawItems.size() >= MaxDrawItems)
+    {
+        return;
+    }
+
+    DrawItem item{};
+    item.mesh = MeshKind::Cube;
+    XMStoreFloat4x4(&item.world, world);
+    item.color = color;
+    m_drawItems.push_back(item);
+}
+
+void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, bool centered)
+{
+    // 문자열 전체 폭을 먼저 계산해 중앙 정렬을 구현합니다.
+    float totalUnits = 0.0f;
+    for (wchar_t ch : text)
+    {
+        totalUnits += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + 0.25f;
+    }
+    if (!text.empty())
+    {
+        totalUnits -= 0.25f;
+    }
+
+    const float startX = centered ? -totalUnits * unitSize * 0.5f : 0.0f;
+    const XMMATRIX parent = XMMatrixRotationY(yaw) * XMMatrixTranslation(origin.x, origin.y, origin.z);
+    float cursor = 0.0f;
+
+    for (wchar_t ch : text)
+    {
+        // 공백은 빈 폭만 차지합니다.
+        if (ch == L' ')
+        {
+            cursor += 2.2f;
+            continue;
+        }
+
+        const GlyphPattern& glyph = FindGlyph(ch);
+        for (int row = 0; row < 7; ++row)
+        {
+            const int glyphWidth = static_cast<int>(glyph[row].size());
+            for (int col = 0; col < glyphWidth; ++col)
+            {
+                if (glyph[row][col] != '1')
+                {
+                    continue;
+                }
+
+                const float localX = startX + (cursor + static_cast<float>(col)) * unitSize;
+                const float localY = (3.0f - static_cast<float>(row)) * unitSize;
+                const XMMATRIX world = XMMatrixScaling(unitSize * 1.04f, unitSize * 1.04f, depth) * XMMatrixTranslation(localX, localY, 0.0f) * parent;
+                AddBoxWithWorld(world, color);
+            }
+        }
+
+        cursor += GlyphWidth(glyph) + 0.25f;
+    }
+}
+
+void AssignmentGame::AddExplodingText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, float explosionTime)
+{
+    // 폭발 애니메이션은 각 글자 블록이 중심에서 바깥으로 멀어지는 방식입니다.
+    float totalUnits = 0.0f;
+    for (wchar_t ch : text)
+    {
+        totalUnits += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + 0.25f;
+    }
+    if (!text.empty())
+    {
+        totalUnits -= 0.25f;
+    }
+
+    const float startX = -totalUnits * unitSize * 0.5f;
+    const float t = std::clamp(explosionTime / 1.1f, 0.0f, 1.0f);
+    const XMMATRIX parent = XMMatrixRotationY(yaw) * XMMatrixTranslation(origin.x, origin.y, origin.z);
+    float cursor = 0.0f;
+
+    for (wchar_t ch : text)
+    {
+        if (ch == L' ')
+        {
+            cursor += 2.2f;
+            continue;
+        }
+
+        const GlyphPattern& glyph = FindGlyph(ch);
+        for (int row = 0; row < 7; ++row)
+        {
+            const int glyphWidth = static_cast<int>(glyph[row].size());
+            for (int col = 0; col < glyphWidth; ++col)
+            {
+                if (glyph[row][col] != '1')
+                {
+                    continue;
+                }
+
+                const float localX = startX + (cursor + static_cast<float>(col)) * unitSize;
+                const float localY = (3.0f - static_cast<float>(row)) * unitSize;
+                const XMVECTOR dir = XMVector3Normalize(XMVectorSet(localX, localY + 0.15f, 0.35f, 0.0f));
+                XMFLOAT3 direction{};
+                XMStoreFloat3(&direction, dir);
+                const float burst = t * t * 3.0f;
+                const XMMATRIX spin = XMMatrixRotationRollPitchYaw(t * row, t * col, t * (row + col));
+                const XMMATRIX world =
+                    XMMatrixScaling(unitSize * 1.04f, unitSize * 1.04f, depth) *
+                    spin *
+                    XMMatrixTranslation(localX + direction.x * burst, localY + direction.y * burst, direction.z * burst) *
+                    parent;
+                AddBoxWithWorld(world, color);
+            }
+        }
+
+        cursor += GlyphWidth(glyph) + 0.25f;
+    }
+}
+
+bool AssignmentGame::HitStartName(int x, int y) const
+{
+    // 플레이 글씨가 위치한 화면 중앙 하단 영역을 선택 대상으로 사용합니다.
+    const float nx = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
+    const float ny = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
+    return nx >= 0.38f && nx <= 0.62f && ny >= 0.45f && ny <= 0.63f;
+}
+
+int AssignmentGame::HitMenuEntry(int x, int y) const
+{
+    // 메뉴 항목은 3D 배치와 비슷한 화면 높이에 사각 선택 영역을 둡니다.
+    const float nx = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
+    const float ny = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
+    if (nx < 0.36f || nx > 0.64f)
+    {
+        return -1;
+    }
+
+    for (std::size_t i = 0; i < m_menuEntries.size(); ++i)
+    {
+        const float screenY = 0.31f + static_cast<float>(i) * 0.068f;
+        if (std::fabs(ny - screenY) < 0.030f)
+        {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
+}
+
+void AssignmentGame::ResetLevel()
+{
+    // Level-1을 처음부터 다시 시작할 때 헬리콥터와 표적 상태를 초기화합니다.
+    m_helicopterPosition = { 0.0f, 5.0f * GP_WORLD_UNITS_PER_METER, -35.0f * GP_WORLD_UNITS_PER_METER };
+    m_helicopterYaw = 0.0f;
+    m_helicopterPitch = 0.0f;
+    m_rotorAngle = 0.0f;
+    m_shotCooldown = 0.0f;
+    m_crosshairValid = false;
+    m_lockedTargetIndex = -1;
+    m_hasLastMousePosition = false;
+    m_bullets.clear();
+    m_targets =
+    {
+        { { -60.0f, 0.8f, 45.0f }, true },
+        { { 0.0f, 0.8f, 85.0f }, true },
+        { { 60.0f, 0.8f, 42.0f }, true },
+        { { -42.0f, 0.8f, 120.0f }, true },
+        { { 42.0f, 0.8f, 125.0f }, true }
+    };
+    UpdateAimRay();
+}
+
+bool AssignmentGame::IsTargetIndexValid(int targetIndex) const
+{
+    // 락온 대상 인덱스가 범위 안이고 아직 살아 있는지 확인합니다.
+    if (targetIndex < 0 || targetIndex >= static_cast<int>(m_targets.size()))
+    {
+        return false;
+    }
+
+    return m_targets[static_cast<std::size_t>(targetIndex)].active;
+}
+
+float AssignmentGame::ScreenConstantScaleAt(const XMFLOAT3& position, float scalePerMeter) const
+{
+    // 카메라에서 멀어질수록 월드 크기를 키워 화면상 크기가 크게 줄지 않게 보정합니다.
+    const XMFLOAT3 cameraPosition = LevelCameraPosition();
+    const float distance = std::sqrt(std::max(0.0001f, DistanceSquared(position, cameraPosition)));
+    return std::clamp(distance * scalePerMeter, 0.35f, 8.0f);
+}
+
+XMFLOAT3 AssignmentGame::LevelCameraPosition() const
+{
+    // Camera.cpp의 3인칭 카메라 위치 계산과 같은 기준을 사용합니다.
+    const XMFLOAT3 flatForward{ std::sinf(m_helicopterYaw), 0.0f, std::cosf(m_helicopterYaw) };
+    return
+    {
+        m_helicopterPosition.x - flatForward.x * 7.0f,
+        m_helicopterPosition.y + 4.0f,
+        m_helicopterPosition.z - flatForward.z * 7.0f
+    };
+}
+
+XMFLOAT3 AssignmentGame::ForwardDirection() const
+{
+    // yaw는 수평 방향, pitch는 위아래 조준 각도입니다.
+    const float cosPitch = std::cos(m_helicopterPitch);
+    return Collision::Normalize({ std::sin(m_helicopterYaw) * cosPitch, std::sin(m_helicopterPitch), std::cos(m_helicopterYaw) * cosPitch });
+}
+
+XMFLOAT3 AssignmentGame::MuzzlePosition() const
+{
+    // 임시 박스 헬리콥터의 앞부분을 총구 위치로 사용합니다.
+    const XMFLOAT3 forward = ForwardDirection();
+    return
+    {
+        m_helicopterPosition.x + forward.x * 1.55f,
+        m_helicopterPosition.y + 0.02f + forward.y * 0.25f,
+        m_helicopterPosition.z + forward.z * 1.55f
+    };
+}
