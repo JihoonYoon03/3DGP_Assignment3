@@ -175,12 +175,12 @@ void AssignmentGame::Initialize(HWND hwnd, UINT width, UINT height)
     // PDF 메뉴 항목 순서를 그대로 둡니다.
     m_menuEntries =
     {
-        { L"TUTORIAL", 1.75f },
-        { L"LEVEL-1", 1.05f },
-        { L"LEVEL-2", 0.35f },
-        { L"LEVEL-3", -0.35f },
-        { L"START", -1.05f },
-        { L"END", -1.75f }
+        { L"TUTORIAL", 1.85f },
+        { L"LEVEL-1", 1.30f },
+        { L"LEVEL-2", 0.75f },
+        { L"LEVEL-3", 0.20f },
+        { L"START", -0.35f },
+        { L"END", -0.90f }
     };
 
     // 장치, 파이프라인, 메시를 차례로 준비합니다.
@@ -303,6 +303,7 @@ void AssignmentGame::OnMouseDown(int x, int y)
         {
             m_nameExploding = true;
             m_nameExplosionTime = 0.0f;
+            m_nameExplosionYaw = m_totalTime * 1.7f;
         }
         return;
     }
@@ -327,6 +328,29 @@ void AssignmentGame::OnMouseDown(int x, int y)
         {
             PostMessageW(m_hwnd, WM_CLOSE, 0, 0);
         }
+    }
+}
+
+void AssignmentGame::OnRightMouseDown(int, int)
+{
+    // Level-1에서만 우클릭으로 현재 락온 대상을 고정하거나 고정을 해제합니다.
+    if (m_scene != SceneMode::Level1)
+    {
+        return;
+    }
+
+    if (m_lockPinned)
+    {
+        m_lockPinned = false;
+        m_lockedTargetIndex = -1;
+        UpdateAimRay();
+        return;
+    }
+
+    UpdateAimRay();
+    if (IsTargetIndexValid(m_lockedTargetIndex))
+    {
+        m_lockPinned = true;
     }
 }
 

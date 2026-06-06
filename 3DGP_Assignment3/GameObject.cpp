@@ -17,6 +17,12 @@ namespace
 {
     // 파이 값은 회전 애니메이션과 카메라 계산에 사용합니다.
     constexpr float Pi = 3.1415926535f;
+    // 메뉴 텍스트 크기는 렌더링과 클릭 판정이 같은 값을 쓰도록 한 곳에 둡니다.
+    constexpr float MenuTextUnitSize = 0.066f;
+    constexpr float MenuTextDepth = 0.085f;
+    // 미사일은 발사 직후 잠시 직진한 뒤 천천히 선회하며 락온 대상을 추적합니다.
+    constexpr float MissileHomingDelaySeconds = 0.55f;
+    constexpr float MissileTurnRateRadians = 0.70f;
 
     // 5x7 도트 글리프 하나를 표현하는 타입입니다.
     using GlyphPattern = std::array<std::string_view, 7>;
@@ -278,21 +284,28 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         const float currentSpeed = std::sqrt(std::max(0.0001f, DistanceSquared(bullet.velocity, { 0.0f, 0.0f, 0.0f })));
         if (bullet.homing && IsTargetIndexValid(bullet.targetIndex))
         {
-            const Target& target = m_targets[static_cast<std::size_t>(bullet.targetIndex)];
-            const XMFLOAT3 targetPoint{ target.position.x, target.position.y + 0.65f, target.position.z };
-            const XMFLOAT3 desiredDirection = Collision::Normalize(
-                {
-                    targetPoint.x - bullet.position.x,
-                    targetPoint.y - bullet.position.y,
-                    targetPoint.z - bullet.position.z
-                });
-            const XMFLOAT3 currentDirection = Collision::Normalize(bullet.velocity);
-            const float turnRateRadians = 1.45f;
-            const float dot = std::clamp(Collision::Dot(currentDirection, desiredDirection), -1.0f, 1.0f);
-            const float angle = std::acos(dot);
-            const float blend = (angle <= 0.0001f) ? 1.0f : std::min(1.0f, (turnRateRadians * deltaSeconds) / angle);
-            const XMFLOAT3 newDirection = BlendDirection(currentDirection, desiredDirection, blend);
-            bullet.velocity = ScaleVector(newDirection, currentSpeed);
+            // 발사 직후에는 헬기 전방으로 그대로 나가게 하여 유도 시작 타이밍이 눈에 보이도록 합니다.
+            if (bullet.homingDelaySeconds > 0.0f)
+            {
+                bullet.homingDelaySeconds = std::max(0.0f, bullet.homingDelaySeconds - deltaSeconds);
+            }
+            else
+            {
+                const Target& target = m_targets[static_cast<std::size_t>(bullet.targetIndex)];
+                const XMFLOAT3 targetPoint{ target.position.x, target.position.y + 0.65f, target.position.z };
+                const XMFLOAT3 desiredDirection = Collision::Normalize(
+                    {
+                        targetPoint.x - bullet.position.x,
+                        targetPoint.y - bullet.position.y,
+                        targetPoint.z - bullet.position.z
+                    });
+                const XMFLOAT3 currentDirection = Collision::Normalize(bullet.velocity);
+                const float dot = std::clamp(Collision::Dot(currentDirection, desiredDirection), -1.0f, 1.0f);
+                const float angle = std::acos(dot);
+                const float blend = (angle <= 0.0001f) ? 1.0f : std::min(1.0f, (MissileTurnRateRadians * deltaSeconds) / angle);
+                const XMFLOAT3 newDirection = BlendDirection(currentDirection, desiredDirection, blend);
+                bullet.velocity = ScaleVector(newDirection, currentSpeed);
+            }
         }
 
         bullet.position = AddVector(bullet.position, ScaleVector(bullet.velocity, deltaSeconds));
@@ -376,8 +389,20 @@ void AssignmentGame::UpdateAimRay()
         }
     }
 
-    // 직접 맞춘 표적을 최우선으로 락온하고, 아니면 조준 콘 안의 표적을 락온합니다.
-    m_lockedTargetIndex = (hitTargetIndex >= 0) ? hitTargetIndex : lockCandidateIndex;
+    // 직접 맞춘 표적을 최우선 후보로 두고, 락온 고정 중이면 기존 대상을 유지합니다.
+    const int automaticLockIndex = (hitTargetIndex >= 0) ? hitTargetIndex : lockCandidateIndex;
+    if (m_lockPinned)
+    {
+        if (!IsTargetIndexValid(m_lockedTargetIndex))
+        {
+            m_lockPinned = false;
+            m_lockedTargetIndex = automaticLockIndex;
+        }
+    }
+    else
+    {
+        m_lockedTargetIndex = automaticLockIndex;
+    }
 
     // 지형은 하이트맵 높이를 따라 레이마칭하여 실제 표면과의 교차점을 찾습니다.
     Collision::HitResult terrainHit{};
@@ -414,9 +439,10 @@ void AssignmentGame::FireBulletAtAim()
     bullet.position = muzzle;
     // 락온 상태여도 미사일은 먼저 헬기 전방으로 발사되고, 이후 자체 회전으로 목표를 추적합니다.
     bullet.velocity = Collision::Scale(launchDirection, 55.0f * GP_WORLD_UNITS_PER_METER);
-    bullet.lifeSeconds = 8.0f;
+    bullet.lifeSeconds = 10.0f;
     bullet.homing = IsTargetIndexValid(m_lockedTargetIndex);
     bullet.targetIndex = bullet.homing ? m_lockedTargetIndex : -1;
+    bullet.homingDelaySeconds = bullet.homing ? MissileHomingDelaySeconds : 0.0f;
     m_bullets.push_back(bullet);
     m_shotCooldown = 0.18f;
 }
@@ -447,7 +473,7 @@ void AssignmentGame::BuildStartScene()
     AddText3D(L"3D GAME PROGRAMMING 1", { 0.0f, 1.35f, 0.0f }, 0.090f, 0.13f, { 0.65f, 0.88f, 1.0f, 1.0f });
 
     // 플레이 버튼은 3D 글씨이며, 클릭하면 메뉴 화면으로 전환됩니다.
-    const float nameYaw = m_totalTime * 1.7f;
+    const float nameYaw = m_nameExploding ? m_nameExplosionYaw : m_totalTime * 1.7f;
     if (m_nameExploding)
     {
         AddExplodingText3D(L"PLAY", { 0.0f, -0.55f, 0.0f }, 0.20f, 0.20f, { 1.0f, 0.82f, 0.20f, 1.0f }, nameYaw, m_nameExplosionTime);
@@ -464,14 +490,14 @@ void AssignmentGame::BuildStartScene()
 void AssignmentGame::BuildMenuScene()
 {
     // 메뉴 제목과 항목은 전부 3D 큐브 글씨로 렌더링합니다.
-    AddText3D(L"MENU", { 0.0f, 2.2f, 0.0f }, 0.14f, 0.14f, { 0.85f, 0.95f, 1.0f, 1.0f });
+    AddText3D(L"MENU", { 0.0f, 2.55f, 0.0f }, 0.13f, 0.13f, { 0.85f, 0.95f, 1.0f, 1.0f });
 
     for (const MenuEntry& entry : m_menuEntries)
     {
         const int hoveredIndex = HitMenuEntry(m_mouseX, m_mouseY);
         const bool hovered = hoveredIndex >= 0 && m_menuEntries[hoveredIndex].label == entry.label;
         const XMFLOAT4 color = hovered ? XMFLOAT4{ 1.0f, 0.82f, 0.25f, 1.0f } : XMFLOAT4{ 0.68f, 0.86f, 0.95f, 1.0f };
-        AddText3D(entry.label, { 0.0f, entry.y, 0.0f }, 0.082f, 0.10f, color);
+        AddText3D(entry.label, { 0.0f, entry.y, 0.0f }, MenuTextUnitSize, MenuTextDepth, color);
     }
 }
 
@@ -634,7 +660,7 @@ void AssignmentGame::AddLockOnIndicator()
     const float thickness = std::max(0.12f, size * 0.075f);
     const float half = size * 0.65f;
     const float segment = size * 0.42f;
-    const XMFLOAT4 lockColor{ 1.0f, 0.86f, 0.08f, 1.0f };
+    const XMFLOAT4 lockColor = m_lockPinned ? XMFLOAT4{ 0.18f, 0.96f, 1.0f, 1.0f } : XMFLOAT4{ 1.0f, 0.86f, 0.08f, 1.0f };
 
     AddBox({ center.x - half, center.y + half, center.z }, { thickness, segment, thickness }, lockColor);
     AddBox({ center.x - half + segment * 0.5f, center.y + half, center.z }, { segment, thickness, thickness }, lockColor);
@@ -786,7 +812,6 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
     // 메뉴 항목의 실제 3D 글자 영역을 화면 좌표로 투영해 클릭 영역과 표시 위치를 맞춥니다.
     const float mouseX = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
     const float mouseY = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
-    constexpr float menuUnitSize = 0.082f;
     const XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -8.5f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     const XMMATRIX viewProjection = view * ProjectionMatrix();
 
@@ -803,8 +828,8 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
     for (std::size_t i = 0; i < m_menuEntries.size(); ++i)
     {
         const MenuEntry& entry = m_menuEntries[i];
-        const float halfWidth = TextWorldWidth(entry.label, menuUnitSize) * 0.5f + menuUnitSize * 0.6f;
-        const float halfHeight = 7.0f * menuUnitSize * 0.5f + menuUnitSize * 0.6f;
+        const float halfWidth = TextWorldWidth(entry.label, MenuTextUnitSize) * 0.5f + MenuTextUnitSize * 0.6f;
+        const float halfHeight = 7.0f * MenuTextUnitSize * 0.5f + MenuTextUnitSize * 0.6f;
         const XMFLOAT2 topLeft = projectToScreen({ -halfWidth, entry.y + halfHeight, 0.0f });
         const XMFLOAT2 bottomRight = projectToScreen({ halfWidth, entry.y - halfHeight, 0.0f });
         const float minX = std::min(topLeft.x, bottomRight.x);
@@ -843,6 +868,7 @@ void AssignmentGame::ResetLevel()
     m_shotCooldown = 0.0f;
     m_crosshairValid = false;
     m_lockedTargetIndex = -1;
+    m_lockPinned = false;
     m_hasLastMousePosition = false;
     m_bullets.clear();
     m_targets =

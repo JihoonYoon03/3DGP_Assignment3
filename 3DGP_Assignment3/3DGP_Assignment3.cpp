@@ -204,6 +204,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         // 클릭 드래그가 끝나면 마우스 캡처를 해제합니다.
         ReleaseCapture();
         break;
+    case WM_RBUTTONDOWN:
+        // 오른쪽 클릭은 Level-1에서 현재 자동 락온 대상을 고정하거나 해제합니다.
+        if (g_game)
+        {
+            g_game->OnRightMouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        }
+        break;
     case WM_PAINT:
         {
             PAINTSTRUCT ps;

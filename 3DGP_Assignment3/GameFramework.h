@@ -46,6 +46,7 @@ public:
     // 마우스 이동과 클릭을 씬 상태에 맞게 처리합니다.
     void OnMouseMove(int x, int y);
     void OnMouseDown(int x, int y);
+    void OnRightMouseDown(int x, int y);
 
 private:
     // 더블 버퍼링을 사용합니다.
@@ -134,6 +135,7 @@ private:
         DirectX::XMFLOAT3 position{};
         DirectX::XMFLOAT3 velocity{};
         float lifeSeconds = 0.0f;
+        float homingDelaySeconds = 0.0f;
         bool homing = false;
         int targetIndex = -1;
     };
@@ -278,6 +280,7 @@ private:
     float m_totalTime = 0.0f;
     bool m_nameExploding = false;
     float m_nameExplosionTime = 0.0f;
+    float m_nameExplosionYaw = 0.0f;
 
     // PDF 요구사항의 메뉴 항목 목록입니다.
     std::vector<MenuEntry> m_menuEntries;
@@ -291,6 +294,7 @@ private:
     std::vector<Bullet> m_bullets;
     std::vector<Target> m_targets;
     int m_lockedTargetIndex = -1;
+    bool m_lockPinned = false;
 
     // 총구에서 쏜 조준 광선의 결과 위치입니다.
     bool m_crosshairValid = false;
