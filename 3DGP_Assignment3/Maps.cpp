@@ -149,7 +149,7 @@ namespace
     {
         const int clampedX = std::clamp(x, 0, static_cast<int>(data.width) - 1);
         const int clampedZ = std::clamp(z, 0, static_cast<int>(data.height) - 1);
-        return data.samples[static_cast<std::size_t>(clampedZ) * data.width + clampedX] * GP_HEIGHTMAP_MAX_HEIGHT_METERS * GP_WORLD_UNITS_PER_METER;
+        return (GP_TERRAIN_BASE_HEIGHT_OFFSET_METERS + data.samples[static_cast<std::size_t>(clampedZ) * data.width + clampedX] * GP_HEIGHTMAP_MAX_HEIGHT_METERS) * GP_WORLD_UNITS_PER_METER;
     }
 
     // 높이 차이로부터 지형 노멀을 계산합니다.
@@ -236,7 +236,7 @@ void AssignmentGame::CreateMeshResources()
             const float worldX = static_cast<float>(x) * cellX - halfWidth;
             const float worldZ = static_cast<float>(z) * cellZ - halfLength;
             const float normalizedHeight = heightMap ? heightMap->samples[static_cast<std::size_t>(z) * terrainWidth + x] : 0.0f;
-            const float height = heightMap ? normalizedHeight * GP_HEIGHTMAP_MAX_HEIGHT_METERS * GP_WORLD_UNITS_PER_METER : 0.0f;
+            const float height = heightMap ? (GP_TERRAIN_BASE_HEIGHT_OFFSET_METERS + normalizedHeight * GP_HEIGHTMAP_MAX_HEIGHT_METERS) * GP_WORLD_UNITS_PER_METER : 0.0f;
             const XMFLOAT3 normal = heightMap ? TerrainNormalAt(*heightMap, static_cast<int>(x), static_cast<int>(z)) : XMFLOAT3{ 0.0f, 1.0f, 0.0f };
             const XMFLOAT4 color = heightMap ? TerrainColor(normalizedHeight) : XMFLOAT4{ 0.16f, 0.45f, 0.18f, 1.0f };
             m_terrainHeights.push_back(height);

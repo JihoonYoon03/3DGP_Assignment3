@@ -121,6 +121,23 @@ namespace
         return static_cast<float>(width);
     }
 
+    // 3D 도트 글씨가 실제 월드에서 차지하는 가로 폭을 계산합니다.
+    float TextWorldWidth(const std::wstring& text, float unitSize)
+    {
+        if (text.empty())
+        {
+            return 0.0f;
+        }
+
+        float width = 0.0f;
+        for (const wchar_t ch : text)
+        {
+            width += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + 0.25f;
+        }
+
+        return std::max(0.0f, width - 0.25f) * unitSize;
+    }
+
     // 두 3D 벡터를 더합니다.
     XMFLOAT3 AddVector(const XMFLOAT3& a, const XMFLOAT3& b)
     {
@@ -227,12 +244,27 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
     {
         m_helicopterPosition.y -= moveSpeed * 0.55f * deltaSeconds;
     }
-    m_helicopterPosition.y = std::clamp(m_helicopterPosition.y, 0.9f, 30.0f * GP_WORLD_UNITS_PER_METER);
 
     // 지형 바깥으로 너무 멀리 나가지 않도록 위치를 제한합니다.
-    constexpr float movementLimit = GP_TERRAIN_HALF_SIZE_METERS - 5.0f;
-    m_helicopterPosition.x = std::clamp(m_helicopterPosition.x, -movementLimit, movementLimit);
-    m_helicopterPosition.z = std::clamp(m_helicopterPosition.z, -movementLimit, movementLimit);
+    const float movementLimitX = std::max(5.0f, (m_terrainHalfWidth > 0.0f ? m_terrainHalfWidth : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
+    const float movementLimitZ = std::max(5.0f, (m_terrainHalfLength > 0.0f ? m_terrainHalfLength : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
+    m_helicopterPosition.x = std::clamp(m_helicopterPosition.x, -movementLimitX, movementLimitX);
+    m_helicopterPosition.z = std::clamp(m_helicopterPosition.z, -movementLimitZ, movementLimitZ);
+
+    // PPT의 하이트맵 보간 방식처럼 현재 x/z 위치의 지형 높이를 구해 헬기가 지면 아래로 내려가지 않게 합니다.
+    const float terrainHeight = TerrainHeightAt(m_helicopterPosition.x, m_helicopterPosition.z);
+    const float minimumAltitude = terrainHeight + GP_PLAYER_TERRAIN_CLEARANCE_METERS * GP_WORLD_UNITS_PER_METER;
+    const float maximumAltitude = minimumAltitude + 85.0f * GP_WORLD_UNITS_PER_METER;
+    m_helicopterPosition.y = std::clamp(m_helicopterPosition.y, minimumAltitude, maximumAltitude);
+
+    // 적 객체도 현재 위치의 하이트맵 높이에 맞춰 지면 위에 놓습니다.
+    for (Target& target : m_targets)
+    {
+        if (target.active)
+        {
+            target.position.y = TerrainHeightAt(target.position.x, target.position.z) + GP_ENEMY_TERRAIN_CLEARANCE_METERS * GP_WORLD_UNITS_PER_METER;
+        }
+    }
 
     // 로터는 시간이 지날수록 빠르게 회전합니다.
     m_rotorAngle += 22.0f * deltaSeconds;
@@ -297,7 +329,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
 void AssignmentGame::UpdateAimRay()
 {
     // 헬리콥터 총구에서 현재 yaw/pitch 방향으로 광선을 쏩니다.
-    constexpr float maxAimDistance = GP_TERRAIN_HALF_SIZE_METERS * 2.0f;
+    const float maxAimDistance = std::max({ GP_TERRAIN_HALF_SIZE_METERS, m_terrainHalfWidth, m_terrainHalfLength }) * 2.0f;
     m_aimDirection = ForwardDirection();
     const Collision::Ray ray{ MuzzlePosition(), m_aimDirection };
 
@@ -751,18 +783,36 @@ bool AssignmentGame::HitStartName(int x, int y) const
 
 int AssignmentGame::HitMenuEntry(int x, int y) const
 {
-    // 메뉴 항목은 3D 배치와 비슷한 화면 높이에 사각 선택 영역을 둡니다.
-    const float nx = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
-    const float ny = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
-    if (nx < 0.36f || nx > 0.64f)
+    // 메뉴 항목의 실제 3D 글자 영역을 화면 좌표로 투영해 클릭 영역과 표시 위치를 맞춥니다.
+    const float mouseX = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
+    const float mouseY = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
+    constexpr float menuUnitSize = 0.082f;
+    const XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -8.5f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+    const XMMATRIX viewProjection = view * ProjectionMatrix();
+
+    const auto projectToScreen = [viewProjection](const XMFLOAT3& worldPosition)
     {
-        return -1;
-    }
+        const XMVECTOR projected = XMVector3TransformCoord(XMLoadFloat3(&worldPosition), viewProjection);
+        return XMFLOAT2
+        {
+            (XMVectorGetX(projected) + 1.0f) * 0.5f,
+            (1.0f - XMVectorGetY(projected)) * 0.5f
+        };
+    };
 
     for (std::size_t i = 0; i < m_menuEntries.size(); ++i)
     {
-        const float screenY = 0.245f + static_cast<float>(i) * 0.100f;
-        if (std::fabs(ny - screenY) < 0.043f)
+        const MenuEntry& entry = m_menuEntries[i];
+        const float halfWidth = TextWorldWidth(entry.label, menuUnitSize) * 0.5f + menuUnitSize * 0.6f;
+        const float halfHeight = 7.0f * menuUnitSize * 0.5f + menuUnitSize * 0.6f;
+        const XMFLOAT2 topLeft = projectToScreen({ -halfWidth, entry.y + halfHeight, 0.0f });
+        const XMFLOAT2 bottomRight = projectToScreen({ halfWidth, entry.y - halfHeight, 0.0f });
+        const float minX = std::min(topLeft.x, bottomRight.x);
+        const float maxX = std::max(topLeft.x, bottomRight.x);
+        const float minY = std::min(topLeft.y, bottomRight.y);
+        const float maxY = std::max(topLeft.y, bottomRight.y);
+
+        if (mouseX >= minX && mouseX <= maxX && mouseY >= minY && mouseY <= maxY)
         {
             return static_cast<int>(i);
         }
@@ -774,7 +824,19 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
 void AssignmentGame::ResetLevel()
 {
     // Level-1을 처음부터 다시 시작할 때 헬리콥터와 표적 상태를 초기화합니다.
-    m_helicopterPosition = { 0.0f, 5.0f * GP_WORLD_UNITS_PER_METER, -35.0f * GP_WORLD_UNITS_PER_METER };
+    const auto placeOnTerrain = [this](float x, float z, float clearanceMeters)
+    {
+        return XMFLOAT3
+        {
+            x,
+            TerrainHeightAt(x, z) + clearanceMeters * GP_WORLD_UNITS_PER_METER,
+            z
+        };
+    };
+
+    const float usableHalfX = std::max(80.0f * GP_WORLD_UNITS_PER_METER, (m_terrainHalfWidth > 0.0f ? m_terrainHalfWidth : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
+    const float usableHalfZ = std::max(120.0f * GP_WORLD_UNITS_PER_METER, (m_terrainHalfLength > 0.0f ? m_terrainHalfLength : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
+    m_helicopterPosition = placeOnTerrain(0.0f, -usableHalfZ * 0.45f, GP_PLAYER_TERRAIN_CLEARANCE_METERS);
     m_helicopterYaw = 0.0f;
     m_helicopterPitch = 0.0f;
     m_rotorAngle = 0.0f;
@@ -785,11 +847,11 @@ void AssignmentGame::ResetLevel()
     m_bullets.clear();
     m_targets =
     {
-        { { -60.0f, 0.8f, 45.0f }, true },
-        { { 0.0f, 0.8f, 85.0f }, true },
-        { { 60.0f, 0.8f, 42.0f }, true },
-        { { -42.0f, 0.8f, 120.0f }, true },
-        { { 42.0f, 0.8f, 125.0f }, true }
+        { placeOnTerrain(-usableHalfX * 0.48f, usableHalfZ * 0.08f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
+        { placeOnTerrain(0.0f, usableHalfZ * 0.30f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
+        { placeOnTerrain(usableHalfX * 0.48f, usableHalfZ * 0.08f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
+        { placeOnTerrain(-usableHalfX * 0.32f, usableHalfZ * 0.56f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
+        { placeOnTerrain(usableHalfX * 0.32f, usableHalfZ * 0.60f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true }
     };
     UpdateAimRay();
 }

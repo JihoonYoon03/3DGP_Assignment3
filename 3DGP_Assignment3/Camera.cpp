@@ -10,7 +10,7 @@ XMMATRIX AssignmentGame::ProjectionMatrix() const
 {
     // 창 비율에 맞춘 왼손 좌표계 원근 투영입니다.
     const float aspectRatio = static_cast<float>(std::max(1u, m_width)) / static_cast<float>(std::max(1u, m_height));
-    return XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), aspectRatio, 0.1f, 200.0f);
+    return XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), aspectRatio, 0.1f, 1200.0f);
 }
 
 XMMATRIX AssignmentGame::LevelViewMatrix() const
