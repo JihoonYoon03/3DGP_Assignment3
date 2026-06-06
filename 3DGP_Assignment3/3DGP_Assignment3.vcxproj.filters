@@ -13,6 +13,12 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Models">
+      <UniqueIdentifier>{7D451937-215D-45BF-A28E-322889F6C58C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Textures">
+      <UniqueIdentifier>{95BE78BC-71BD-47E7-9751-367A337E0C9B}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="framework.h">
@@ -84,5 +90,13 @@
     <Image Include="3DGP_Assignment3.ico">
       <Filter>리소스 파일</Filter>
     </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Models\Apache.txt">
+      <Filter>Models</Filter>
+    </None>
+    <None Include="Textures\Cheongsando.png">
+      <Filter>Textures</Filter>
+    </None>
   </ItemGroup>
 </Project>

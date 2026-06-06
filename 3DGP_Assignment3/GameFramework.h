@@ -2,6 +2,7 @@
 
 // 과제 3 게임 전체를 관리하는 Direct3D 12 게임 프레임워크 헤더입니다.
 #include "pch.h"
+#include "Collision.h"
 
 // Direct3D 12 장치와 DXGI 스왑 체인을 사용합니다.
 #include <d3d12.h>
@@ -69,21 +70,31 @@ private:
     {
         Cube = 0,
         Terrain = 1,
-        Count = 2
+        Apache = 2,
+        Count = 3
     };
 
-    // 모든 3D 도형은 위치와 색상 정점으로 표현합니다.
+    // 모든 3D 도형은 위치, 색상, 노멀 정점으로 표현합니다.
     struct Vertex
     {
         DirectX::XMFLOAT3 position{};
         DirectX::XMFLOAT4 color{};
+        DirectX::XMFLOAT3 normal{ 0.0f, 1.0f, 0.0f };
     };
 
-    // 객체별 월드-뷰-투영 행렬과 색상입니다.
+    // 객체별 행렬, 색상, 조명 파라미터입니다.
     struct ObjectConstants
     {
+        DirectX::XMFLOAT4X4 world{};
+        DirectX::XMFLOAT4X4 worldInverseTranspose{};
         DirectX::XMFLOAT4X4 worldViewProjection{};
         DirectX::XMFLOAT4 color{};
+        DirectX::XMFLOAT4 cameraPosition{};
+        DirectX::XMFLOAT4 lightDirection{};
+        DirectX::XMFLOAT4 ambientColor{};
+        DirectX::XMFLOAT4 diffuseColor{};
+        DirectX::XMFLOAT4 specularColor{};
+        DirectX::XMFLOAT4 lightingOptions{};
     };
 
     // 정점/인덱스 버퍼와 D3D12 뷰 정보를 묶은 메시 리소스입니다.
@@ -97,10 +108,22 @@ private:
         D3D12_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     };
 
+    // Apache 파일에서 분리해 읽은 파트 메시입니다.
+    struct ApacheMeshPart
+    {
+        MeshResource mesh;
+        DirectX::XMFLOAT3 center{};
+        DirectX::XMFLOAT3 extents{};
+        std::string name;
+        bool mainRotor = false;
+        bool tailRotor = false;
+    };
+
     // 한 번의 DrawIndexedInstanced 호출에 필요한 렌더 항목입니다.
     struct DrawItem
     {
         MeshKind mesh = MeshKind::Cube;
+        std::size_t meshPartIndex = 0;
         DirectX::XMFLOAT4X4 world{};
         DirectX::XMFLOAT4 color{};
     };
@@ -146,6 +169,9 @@ private:
     // Mesh.cpp / Maps.cpp: 기본 메시와 지형 메시를 생성합니다.
     void CreateMeshResources();
     void CreateMesh(MeshResource& mesh, const std::vector<Vertex>& vertices, const std::vector<std::uint32_t>& indices, D3D12_PRIMITIVE_TOPOLOGY topology);
+    bool CreateApacheMesh();
+    bool LoadApacheModelFile(const std::wstring& filePath);
+    DirectX::XMMATRIX ApacheModelWorldMatrix() const;
 
     // GameObject.cpp: 게임 상태 갱신과 3D 오브젝트 배치를 담당합니다.
     void Update(float deltaSeconds);
@@ -172,6 +198,8 @@ private:
     void SetLevelCursorCapture(bool enabled);
     bool IsTargetIndexValid(int targetIndex) const;
     float ScreenConstantScaleAt(const DirectX::XMFLOAT3& position, float scalePerMeter) const;
+    float TerrainHeightAt(float worldX, float worldZ) const;
+    bool RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit) const;
     DirectX::XMFLOAT3 LevelCameraPosition() const;
     DirectX::XMFLOAT3 ForwardDirection() const;
     DirectX::XMFLOAT3 MuzzlePosition() const;
@@ -219,11 +247,22 @@ private:
     D3D12_VIEWPORT m_viewport{};
     D3D12_RECT m_scissorRect{};
 
-    // 큐브와 지형 메시 리소스입니다.
+    // 큐브, 지형, Apache 모델 메시 리소스입니다.
     std::array<MeshResource, static_cast<std::size_t>(MeshKind::Count)> m_meshes{};
+    std::vector<ApacheMeshPart> m_apacheParts;
+    bool m_apacheModelLoaded = false;
 
     // 매 프레임 새로 구성되는 렌더 항목 목록입니다.
     std::vector<DrawItem> m_drawItems;
+
+    // 하이트맵 지형 충돌과 높이 질의를 위한 CPU 높이 데이터입니다.
+    std::vector<float> m_terrainHeights;
+    UINT m_terrainWidth = 0;
+    UINT m_terrainLength = 0;
+    float m_terrainCellX = 1.0f;
+    float m_terrainCellZ = 1.0f;
+    float m_terrainHalfWidth = 0.0f;
+    float m_terrainHalfLength = 0.0f;
 
     // 키보드와 마우스 입력 상태입니다.
     std::array<bool, 256> m_keyDown{};

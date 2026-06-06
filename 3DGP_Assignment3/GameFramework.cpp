@@ -175,12 +175,12 @@ void AssignmentGame::Initialize(HWND hwnd, UINT width, UINT height)
     // PDF 메뉴 항목 순서를 그대로 둡니다.
     m_menuEntries =
     {
-        { L"TUTORIAL", 1.30f },
-        { L"LEVEL-1", 0.82f },
-        { L"LEVEL-2", 0.34f },
-        { L"LEVEL-3", -0.14f },
-        { L"START", -0.62f },
-        { L"END", -1.10f }
+        { L"TUTORIAL", 1.75f },
+        { L"LEVEL-1", 1.05f },
+        { L"LEVEL-2", 0.35f },
+        { L"LEVEL-3", -0.35f },
+        { L"START", -1.05f },
+        { L"END", -1.75f }
     };
 
     // 장치, 파이프라인, 메시를 차례로 준비합니다.
@@ -556,37 +556,64 @@ void AssignmentGame::CreatePipelineState()
     ThrowIfFailed(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob));
     ThrowIfFailed(m_device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature)));
 
-    // 매우 단순한 색상 셰이더로 모든 큐브와 지형을 그립니다.
+    // 앰비언트, 디퓨즈, 스페큘러 항을 갖는 방향성 광원 셰이더입니다.
     const char* shaderSource = R"(
 cbuffer ObjectConstants : register(b0)
 {
+    float4x4 gWorld;
+    float4x4 gWorldInverseTranspose;
     float4x4 gWorldViewProjection;
     float4 gColor;
+    float4 gCameraPosition;
+    float4 gLightDirection;
+    float4 gAmbientColor;
+    float4 gDiffuseColor;
+    float4 gSpecularColor;
+    float4 gLightingOptions;
 };
 
 struct VertexIn
 {
     float3 position : POSITION;
     float4 color : COLOR;
+    float3 normal : NORMAL;
 };
 
 struct VertexOut
 {
     float4 position : SV_POSITION;
     float4 color : COLOR;
+    float3 worldPosition : WORLDPOSITION;
+    float3 normal : NORMAL;
 };
 
 VertexOut VSMain(VertexIn input)
 {
     VertexOut output;
+    float4 worldPosition = mul(float4(input.position, 1.0f), gWorld);
     output.position = mul(float4(input.position, 1.0f), gWorldViewProjection);
     output.color = input.color * gColor;
+    output.worldPosition = worldPosition.xyz;
+    output.normal = normalize(mul(float4(input.normal, 0.0f), gWorldInverseTranspose).xyz);
     return output;
 }
 
 float4 PSMain(VertexOut input) : SV_TARGET
 {
-    return input.color;
+    float3 normal = normalize(input.normal);
+    float3 lightToSurface = normalize(gLightDirection.xyz);
+    float3 surfaceToLight = -lightToSurface;
+    float diffuseFactor = saturate(dot(normal, surfaceToLight));
+
+    float3 viewDirection = normalize(gCameraPosition.xyz - input.worldPosition);
+    float3 reflectDirection = reflect(lightToSurface, normal);
+    float specularFactor = pow(saturate(dot(viewDirection, reflectDirection)), gLightingOptions.x);
+
+    float3 litColor =
+        gAmbientColor.rgb +
+        gDiffuseColor.rgb * diffuseFactor +
+        gSpecularColor.rgb * specularFactor;
+    return float4(input.color.rgb * litColor, input.color.a);
 }
 )";
 
@@ -601,11 +628,12 @@ float4 PSMain(VertexOut input) : SV_TARGET
     ThrowIfFailed(D3DCompile(shaderSource, std::strlen(shaderSource), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorBlob));
     ThrowIfFailed(D3DCompile(shaderSource, std::strlen(shaderSource), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorBlob));
 
-    // 정점 입력 레이아웃은 위치와 색상 두 요소로 구성됩니다.
+    // 정점 입력 레이아웃은 위치, 색상, 노멀 세 요소로 구성됩니다.
     D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
     };
 
     // 래스터라이저는 지형 스트립의 양면을 모두 볼 수 있게 컬링을 끕니다.
@@ -718,12 +746,27 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
     for (std::size_t itemIndex = 0; itemIndex < m_drawItems.size(); ++itemIndex)
     {
         const DrawItem& item = m_drawItems[itemIndex];
-        const MeshResource& mesh = m_meshes[static_cast<std::size_t>(item.mesh)];
-        m_commandList->IASetPrimitiveTopology(mesh.topology);
-        m_commandList->IASetVertexBuffers(0, 1, &mesh.vertexBufferView);
-        m_commandList->IASetIndexBuffer(&mesh.indexBufferView);
+        const MeshResource* mesh = &m_meshes[static_cast<std::size_t>(item.mesh)];
+        if (item.mesh == MeshKind::Apache)
+        {
+            if (item.meshPartIndex >= m_apacheParts.size())
+            {
+                continue;
+            }
+            mesh = &m_apacheParts[item.meshPartIndex].mesh;
+        }
+
+        if (mesh->indexCount == 0 || !mesh->vertexBuffer || !mesh->indexBuffer)
+        {
+            // 모델 파일을 찾지 못한 메시 항목은 앱을 중단하지 않고 건너뜁니다.
+            continue;
+        }
+
+        m_commandList->IASetPrimitiveTopology(mesh->topology);
+        m_commandList->IASetVertexBuffers(0, 1, &mesh->vertexBufferView);
+        m_commandList->IASetIndexBuffer(&mesh->indexBufferView);
         m_commandList->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress() + itemIndex * constantBufferStride);
-        m_commandList->DrawIndexedInstanced(mesh.indexCount, 1, 0, 0, 0);
+        m_commandList->DrawIndexedInstanced(mesh->indexCount, 1, 0, 0, 0);
     }
 
     // 백 버퍼를 다시 Present 상태로 돌려 화면에 표시할 준비를 합니다.
@@ -741,15 +784,33 @@ void AssignmentGame::UploadObjectConstants(const XMMATRIX& viewProjection)
     }
 
     const UINT constantBufferStride = AlignConstantBufferSize(sizeof(ObjectConstants));
+    const XMFLOAT3 cameraPosition =
+        (m_scene == SceneMode::Level1)
+        ? LevelCameraPosition()
+        : XMFLOAT3{ 0.0f, 0.0f, -8.5f };
+
+    const XMVECTOR lightDirectionVector = XMVector3Normalize(XMVectorSet(-0.45f, -0.85f, 0.25f, 0.0f));
+    XMFLOAT3 lightDirection{};
+    XMStoreFloat3(&lightDirection, lightDirectionVector);
+
     for (std::size_t itemIndex = 0; itemIndex < m_drawItems.size(); ++itemIndex)
     {
         const DrawItem& item = m_drawItems[itemIndex];
         const XMMATRIX world = XMLoadFloat4x4(&item.world);
+        const XMMATRIX worldInverseTranspose = XMMatrixInverse(nullptr, world);
         const XMMATRIX worldViewProjection = XMMatrixTranspose(world * viewProjection);
 
         ObjectConstants constants{};
+        XMStoreFloat4x4(&constants.world, XMMatrixTranspose(world));
+        XMStoreFloat4x4(&constants.worldInverseTranspose, XMMatrixTranspose(worldInverseTranspose));
         XMStoreFloat4x4(&constants.worldViewProjection, worldViewProjection);
         constants.color = item.color;
+        constants.cameraPosition = { cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f };
+        constants.lightDirection = { lightDirection.x, lightDirection.y, lightDirection.z, 0.0f };
+        constants.ambientColor = { GP_LIGHT_AMBIENT_STRENGTH, GP_LIGHT_AMBIENT_STRENGTH, GP_LIGHT_AMBIENT_STRENGTH, 1.0f };
+        constants.diffuseColor = { GP_LIGHT_DIFFUSE_STRENGTH, GP_LIGHT_DIFFUSE_STRENGTH, GP_LIGHT_DIFFUSE_STRENGTH, 1.0f };
+        constants.specularColor = { GP_LIGHT_SPECULAR_STRENGTH, GP_LIGHT_SPECULAR_STRENGTH, GP_LIGHT_SPECULAR_STRENGTH, 1.0f };
+        constants.lightingOptions = { GP_LIGHT_SPECULAR_POWER, 0.0f, 0.0f, 0.0f };
 
         std::memcpy(m_mappedConstantBuffer + itemIndex * constantBufferStride, &constants, sizeof(constants));
     }

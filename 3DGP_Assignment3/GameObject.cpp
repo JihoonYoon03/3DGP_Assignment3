@@ -347,9 +347,9 @@ void AssignmentGame::UpdateAimRay()
     // 직접 맞춘 표적을 최우선으로 락온하고, 아니면 조준 콘 안의 표적을 락온합니다.
     m_lockedTargetIndex = (hitTargetIndex >= 0) ? hitTargetIndex : lockCandidateIndex;
 
-    // 지형은 현재 평면이므로 y=0 평면과의 교차점을 사용합니다.
-    const Collision::HitResult terrainHit = Collision::RaycastPlaneY(ray, 0.0f, bestHit.distance);
-    if (terrainHit.hit)
+    // 지형은 하이트맵 높이를 따라 레이마칭하여 실제 표면과의 교차점을 찾습니다.
+    Collision::HitResult terrainHit{};
+    if (RaycastTerrain(ray, bestHit.distance, terrainHit))
     {
         bestHit = terrainHit;
     }
@@ -452,7 +452,7 @@ void AssignmentGame::BuildLevelScene()
     terrainItem.color = { 1.0f, 1.0f, 1.0f, 1.0f };
     m_drawItems.push_back(terrainItem);
 
-    // 헬리콥터와 슈팅 오브젝트를 임시 박스 모델로 렌더링합니다.
+    // 헬리콥터는 Apache 모델을 우선 사용하고, 표적과 탄환은 임시 박스로 렌더링합니다.
     AddHelicopter();
     AddTargets();
     AddBullets();
@@ -462,6 +462,46 @@ void AssignmentGame::BuildLevelScene()
 
 void AssignmentGame::AddHelicopter()
 {
+    // Apache 모델을 정상적으로 읽었다면 실제 모델 메시를 헬리콥터로 렌더링합니다.
+    if (m_apacheModelLoaded)
+    {
+        const XMMATRIX modelWorld = ApacheModelWorldMatrix();
+        for (std::size_t partIndex = 0; partIndex < m_apacheParts.size(); ++partIndex)
+        {
+            if (m_drawItems.size() >= MaxDrawItems)
+            {
+                return;
+            }
+
+            const ApacheMeshPart& part = m_apacheParts[partIndex];
+            XMMATRIX partAnimation = XMMatrixIdentity();
+            if (part.mainRotor)
+            {
+                // 메인 로터는 파트 중심을 피벗으로 두고 모델 로컬 y축 주위에서 계속 회전합니다.
+                partAnimation =
+                    XMMatrixTranslation(-part.center.x, -part.center.y, -part.center.z) *
+                    XMMatrixRotationY(m_rotorAngle * 1.8f) *
+                    XMMatrixTranslation(part.center.x, part.center.y, part.center.z);
+            }
+            else if (part.tailRotor)
+            {
+                // 꼬리 로터는 꼬리 부분의 얇은 파트를 모델 로컬 x축 주위로 빠르게 회전시킵니다.
+                partAnimation =
+                    XMMatrixTranslation(-part.center.x, -part.center.y, -part.center.z) *
+                    XMMatrixRotationX(m_rotorAngle * 3.2f) *
+                    XMMatrixTranslation(part.center.x, part.center.y, part.center.z);
+            }
+
+            DrawItem item{};
+            item.mesh = MeshKind::Apache;
+            item.meshPartIndex = partIndex;
+            XMStoreFloat4x4(&item.world, partAnimation * modelWorld);
+            item.color = { 1.0f, 1.0f, 1.0f, 1.0f };
+            m_drawItems.push_back(item);
+        }
+        return;
+    }
+
     // 부모 행렬은 헬리콥터 전체를 현재 위치와 방향으로 이동시킵니다.
     const XMMATRIX parent = XMMatrixRotationRollPitchYaw(-m_helicopterPitch * 0.45f, m_helicopterYaw, 0.0f) * XMMatrixTranslation(m_helicopterPosition.x, m_helicopterPosition.y, m_helicopterPosition.z);
 
@@ -492,6 +532,15 @@ void AssignmentGame::AddHelicopter()
     addPart({ 0.35f, -0.27f, 0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
     addPart({ -0.35f, -0.27f, -0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
     addPart({ 0.35f, -0.27f, -0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
+}
+
+XMMATRIX AssignmentGame::ApacheModelWorldMatrix() const
+{
+    // 실제 모델 파트들이 공유하는 기체 배치 행렬입니다.
+    return
+        XMMatrixScaling(GP_APACHE_MODEL_SCALE, GP_APACHE_MODEL_SCALE, GP_APACHE_MODEL_SCALE) *
+        XMMatrixRotationRollPitchYaw(-m_helicopterPitch * 0.45f, m_helicopterYaw, 0.0f) *
+        XMMatrixTranslation(m_helicopterPosition.x, m_helicopterPosition.y, m_helicopterPosition.z);
 }
 
 void AssignmentGame::AddTargets()
@@ -712,8 +761,8 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
 
     for (std::size_t i = 0; i < m_menuEntries.size(); ++i)
     {
-        const float screenY = 0.31f + static_cast<float>(i) * 0.068f;
-        if (std::fabs(ny - screenY) < 0.030f)
+        const float screenY = 0.245f + static_cast<float>(i) * 0.100f;
+        if (std::fabs(ny - screenY) < 0.043f)
         {
             return static_cast<int>(i);
         }
@@ -764,6 +813,95 @@ float AssignmentGame::ScreenConstantScaleAt(const XMFLOAT3& position, float scal
     return std::clamp(distance * scalePerMeter, 0.35f, 8.0f);
 }
 
+float AssignmentGame::TerrainHeightAt(float worldX, float worldZ) const
+{
+    // 하이트맵이 없으면 기존 평면 지형처럼 높이 0을 반환합니다.
+    if (m_terrainHeights.empty() || m_terrainWidth < 2 || m_terrainLength < 2)
+    {
+        return 0.0f;
+    }
+
+    const float localX = (worldX + m_terrainHalfWidth) / m_terrainCellX;
+    const float localZ = (worldZ + m_terrainHalfLength) / m_terrainCellZ;
+    if (localX < 0.0f || localZ < 0.0f || localX > static_cast<float>(m_terrainWidth - 1) || localZ > static_cast<float>(m_terrainLength - 1))
+    {
+        return 0.0f;
+    }
+
+    const int x0 = static_cast<int>(std::floor(localX));
+    const int z0 = static_cast<int>(std::floor(localZ));
+    const int x1 = std::min(x0 + 1, static_cast<int>(m_terrainWidth) - 1);
+    const int z1 = std::min(z0 + 1, static_cast<int>(m_terrainLength) - 1);
+    const float tx = localX - static_cast<float>(x0);
+    const float tz = localZ - static_cast<float>(z0);
+
+    const auto sample = [this](int x, int z)
+    {
+        return m_terrainHeights[static_cast<std::size_t>(z) * m_terrainWidth + x];
+    };
+
+    const float h00 = sample(x0, z0);
+    const float h10 = sample(x1, z0);
+    const float h01 = sample(x0, z1);
+    const float h11 = sample(x1, z1);
+    const float h0 = h00 + (h10 - h00) * tx;
+    const float h1 = h01 + (h11 - h01) * tx;
+    return h0 + (h1 - h0) * tz;
+}
+
+bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit) const
+{
+    // 하이트맵이 없으면 기존 y=0 평면 충돌을 그대로 사용합니다.
+    if (m_terrainHeights.empty())
+    {
+        hit = Collision::RaycastPlaneY(ray, 0.0f, maxDistance);
+        return hit.hit;
+    }
+
+    const float step = std::max(0.35f, std::min(m_terrainCellX, m_terrainCellZ) * 0.5f);
+    float previousDistance = 0.0f;
+    XMFLOAT3 previousPoint = ray.origin;
+    float previousDelta = previousPoint.y - TerrainHeightAt(previousPoint.x, previousPoint.z);
+
+    for (float distance = step; distance <= maxDistance; distance += step)
+    {
+        const XMFLOAT3 point = Collision::PointAt(ray, distance);
+        const float delta = point.y - TerrainHeightAt(point.x, point.z);
+        if (previousDelta >= 0.0f && delta <= 0.0f)
+        {
+            float low = previousDistance;
+            float high = distance;
+            for (int iteration = 0; iteration < 8; ++iteration)
+            {
+                const float mid = (low + high) * 0.5f;
+                const XMFLOAT3 midPoint = Collision::PointAt(ray, mid);
+                const float midDelta = midPoint.y - TerrainHeightAt(midPoint.x, midPoint.z);
+                if (midDelta > 0.0f)
+                {
+                    low = mid;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+
+            hit.hit = true;
+            hit.distance = high;
+            hit.position = Collision::PointAt(ray, high);
+            hit.position.y = TerrainHeightAt(hit.position.x, hit.position.z);
+            return true;
+        }
+
+        previousDistance = distance;
+        previousPoint = point;
+        previousDelta = delta;
+    }
+
+    hit = {};
+    return false;
+}
+
 XMFLOAT3 AssignmentGame::LevelCameraPosition() const
 {
     // Camera.cpp의 3인칭 카메라 위치 계산과 같은 기준을 사용합니다.
@@ -785,12 +923,13 @@ XMFLOAT3 AssignmentGame::ForwardDirection() const
 
 XMFLOAT3 AssignmentGame::MuzzlePosition() const
 {
-    // 임시 박스 헬리콥터의 앞부분을 총구 위치로 사용합니다.
+    // 실제 Apache 모델은 길이가 더 길기 때문에 모델 로딩 여부에 따라 총구 오프셋을 다르게 둡니다.
     const XMFLOAT3 forward = ForwardDirection();
+    const float muzzleOffset = m_apacheModelLoaded ? GP_APACHE_MUZZLE_OFFSET_METERS * GP_WORLD_UNITS_PER_METER : 1.55f;
     return
     {
-        m_helicopterPosition.x + forward.x * 1.55f,
+        m_helicopterPosition.x + forward.x * muzzleOffset,
         m_helicopterPosition.y + 0.02f + forward.y * 0.25f,
-        m_helicopterPosition.z + forward.z * 1.55f
+        m_helicopterPosition.z + forward.z * muzzleOffset
     };
 }

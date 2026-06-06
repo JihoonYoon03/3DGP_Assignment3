@@ -1,8 +1,186 @@
-﻿#include "GameFramework.h"
+#include "GameFramework.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <filesystem>
+#include <optional>
 #include <vector>
+#include <wincodec.h>
 
+using Microsoft::WRL::ComPtr;
 using namespace DirectX;
+
+
+namespace
+{
+    // 하이트맵 파일 이름입니다.
+    constexpr const wchar_t* HeightMapFileName = L"Cheongsando.png";
+
+    // CPU에서 사용하는 하이트맵 샘플 배열입니다.
+    struct HeightMapData
+    {
+        UINT width = 0;
+        UINT height = 0;
+        std::vector<float> samples;
+    };
+
+    // 실행 파일 위치를 기준으로 텍스처 파일을 찾기 위한 디렉터리를 얻습니다.
+    std::filesystem::path ExecutableDirectory()
+    {
+        std::array<wchar_t, MAX_PATH> modulePath{};
+        const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+        if (length == 0 || length >= modulePath.size())
+        {
+            return {};
+        }
+        return std::filesystem::path(modulePath.data()).parent_path();
+    }
+
+    // Visual Studio 실행과 빌드 출력 실행을 모두 고려해 하이트맵 경로를 찾습니다.
+    std::optional<std::filesystem::path> FindHeightMapPath()
+    {
+        std::vector<std::filesystem::path> candidates =
+        {
+            std::filesystem::path(L"Textures") / HeightMapFileName,
+            std::filesystem::path(L"3DGP_Assignment3") / L"Textures" / HeightMapFileName,
+            std::filesystem::path(L"..") / L"Textures" / HeightMapFileName,
+            std::filesystem::path(L"..") / L".." / L"3DGP_Assignment3" / L"Textures" / HeightMapFileName
+        };
+
+        const std::filesystem::path exeDirectory = ExecutableDirectory();
+        if (!exeDirectory.empty())
+        {
+            candidates.push_back(exeDirectory / L"Textures" / HeightMapFileName);
+            candidates.push_back(exeDirectory / L".." / L"Textures" / HeightMapFileName);
+            candidates.push_back(exeDirectory / L".." / L".." / L"3DGP_Assignment3" / L"Textures" / HeightMapFileName);
+        }
+
+        for (const std::filesystem::path& candidate : candidates)
+        {
+            std::error_code error;
+            if (std::filesystem::exists(candidate, error))
+            {
+                return candidate;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // WIC를 사용해 PNG 하이트맵을 0~1 높이 샘플로 읽습니다.
+    std::optional<HeightMapData> LoadHeightMap()
+    {
+        const std::optional<std::filesystem::path> path = FindHeightMapPath();
+        if (!path)
+        {
+            return std::nullopt;
+        }
+
+        const HRESULT initResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE)
+        {
+            return std::nullopt;
+        }
+
+        ComPtr<IWICImagingFactory> factory;
+        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+        if (FAILED(hr))
+        {
+            return std::nullopt;
+        }
+
+        ComPtr<IWICBitmapDecoder> decoder;
+        hr = factory->CreateDecoderFromFilename(path->c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
+        if (FAILED(hr))
+        {
+            return std::nullopt;
+        }
+
+        ComPtr<IWICBitmapFrameDecode> frame;
+        hr = decoder->GetFrame(0, &frame);
+        if (FAILED(hr))
+        {
+            return std::nullopt;
+        }
+
+        UINT width = 0;
+        UINT height = 0;
+        frame->GetSize(&width, &height);
+        if (width == 0 || height == 0)
+        {
+            return std::nullopt;
+        }
+
+        ComPtr<IWICFormatConverter> converter;
+        hr = factory->CreateFormatConverter(&converter);
+        if (SUCCEEDED(hr))
+        {
+            hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        }
+        if (FAILED(hr))
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
+        hr = converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size()), pixels.data());
+        if (FAILED(hr))
+        {
+            return std::nullopt;
+        }
+
+        HeightMapData data{};
+        data.width = width;
+        data.height = height;
+        data.samples.resize(static_cast<std::size_t>(width) * height);
+        for (std::size_t index = 0; index < data.samples.size(); ++index)
+        {
+            const std::uint8_t r = pixels[index * 4 + 0];
+            const std::uint8_t g = pixels[index * 4 + 1];
+            const std::uint8_t b = pixels[index * 4 + 2];
+            data.samples[index] = (static_cast<float>(r) + static_cast<float>(g) + static_cast<float>(b)) / (3.0f * 255.0f);
+        }
+
+        return data;
+    }
+
+    // 하이트맵 샘플을 경계 안에서 안전하게 가져옵니다.
+    float HeightSample(const HeightMapData& data, int x, int z)
+    {
+        const int clampedX = std::clamp(x, 0, static_cast<int>(data.width) - 1);
+        const int clampedZ = std::clamp(z, 0, static_cast<int>(data.height) - 1);
+        return data.samples[static_cast<std::size_t>(clampedZ) * data.width + clampedX] * GP_HEIGHTMAP_MAX_HEIGHT_METERS * GP_WORLD_UNITS_PER_METER;
+    }
+
+    // 높이 차이로부터 지형 노멀을 계산합니다.
+    XMFLOAT3 TerrainNormalAt(const HeightMapData& data, int x, int z)
+    {
+        const float left = HeightSample(data, x - 1, z);
+        const float right = HeightSample(data, x + 1, z);
+        const float down = HeightSample(data, x, z - 1);
+        const float up = HeightSample(data, x, z + 1);
+
+        const XMVECTOR xTangent = XMVectorSet(GP_HEIGHTMAP_CELL_X_METERS * 2.0f, right - left, 0.0f, 0.0f);
+        const XMVECTOR zTangent = XMVectorSet(0.0f, up - down, GP_HEIGHTMAP_CELL_Z_METERS * 2.0f, 0.0f);
+        XMFLOAT3 normal{};
+        XMStoreFloat3(&normal, XMVector3Normalize(XMVector3Cross(zTangent, xTangent)));
+        return normal;
+    }
+
+    // 높이에 따라 초지/암석 느낌의 기본 정점 색상을 만듭니다.
+    XMFLOAT4 TerrainColor(float normalizedHeight)
+    {
+        const float grass = std::clamp(1.0f - normalizedHeight * 1.2f, 0.0f, 1.0f);
+        const float rock = 1.0f - grass;
+        return
+        {
+            0.10f * grass + 0.43f * rock,
+            0.34f * grass + 0.39f * rock,
+            0.13f * grass + 0.32f * rock,
+            1.0f
+        };
+    }
+}
 
 
 void AssignmentGame::CreateMeshResources()
@@ -11,12 +189,12 @@ void AssignmentGame::CreateMeshResources()
     const XMFLOAT4 white{ 1.0f, 1.0f, 1.0f, 1.0f };
     std::vector<Vertex> cubeVertices =
     {
-        { { -0.5f, -0.5f, -0.5f }, white }, { { -0.5f,  0.5f, -0.5f }, white }, { {  0.5f,  0.5f, -0.5f }, white }, { {  0.5f, -0.5f, -0.5f }, white },
-        { { -0.5f, -0.5f,  0.5f }, white }, { {  0.5f, -0.5f,  0.5f }, white }, { {  0.5f,  0.5f,  0.5f }, white }, { { -0.5f,  0.5f,  0.5f }, white },
-        { { -0.5f,  0.5f, -0.5f }, white }, { { -0.5f,  0.5f,  0.5f }, white }, { {  0.5f,  0.5f,  0.5f }, white }, { {  0.5f,  0.5f, -0.5f }, white },
-        { { -0.5f, -0.5f, -0.5f }, white }, { {  0.5f, -0.5f, -0.5f }, white }, { {  0.5f, -0.5f,  0.5f }, white }, { { -0.5f, -0.5f,  0.5f }, white },
-        { { -0.5f, -0.5f,  0.5f }, white }, { { -0.5f,  0.5f,  0.5f }, white }, { { -0.5f,  0.5f, -0.5f }, white }, { { -0.5f, -0.5f, -0.5f }, white },
-        { {  0.5f, -0.5f, -0.5f }, white }, { {  0.5f,  0.5f, -0.5f }, white }, { {  0.5f,  0.5f,  0.5f }, white }, { {  0.5f, -0.5f,  0.5f }, white }
+        { { -0.5f, -0.5f, -0.5f }, white, { 0.0f, 0.0f, -1.0f } }, { { -0.5f,  0.5f, -0.5f }, white, { 0.0f, 0.0f, -1.0f } }, { {  0.5f,  0.5f, -0.5f }, white, { 0.0f, 0.0f, -1.0f } }, { {  0.5f, -0.5f, -0.5f }, white, { 0.0f, 0.0f, -1.0f } },
+        { { -0.5f, -0.5f,  0.5f }, white, { 0.0f, 0.0f,  1.0f } }, { {  0.5f, -0.5f,  0.5f }, white, { 0.0f, 0.0f,  1.0f } }, { {  0.5f,  0.5f,  0.5f }, white, { 0.0f, 0.0f,  1.0f } }, { { -0.5f,  0.5f,  0.5f }, white, { 0.0f, 0.0f,  1.0f } },
+        { { -0.5f,  0.5f, -0.5f }, white, { 0.0f, 1.0f, 0.0f } }, { { -0.5f,  0.5f,  0.5f }, white, { 0.0f, 1.0f, 0.0f } }, { {  0.5f,  0.5f,  0.5f }, white, { 0.0f, 1.0f, 0.0f } }, { {  0.5f,  0.5f, -0.5f }, white, { 0.0f, 1.0f, 0.0f } },
+        { { -0.5f, -0.5f, -0.5f }, white, { 0.0f, -1.0f, 0.0f } }, { {  0.5f, -0.5f, -0.5f }, white, { 0.0f, -1.0f, 0.0f } }, { {  0.5f, -0.5f,  0.5f }, white, { 0.0f, -1.0f, 0.0f } }, { { -0.5f, -0.5f,  0.5f }, white, { 0.0f, -1.0f, 0.0f } },
+        { { -0.5f, -0.5f,  0.5f }, white, { -1.0f, 0.0f, 0.0f } }, { { -0.5f,  0.5f,  0.5f }, white, { -1.0f, 0.0f, 0.0f } }, { { -0.5f,  0.5f, -0.5f }, white, { -1.0f, 0.0f, 0.0f } }, { { -0.5f, -0.5f, -0.5f }, white, { -1.0f, 0.0f, 0.0f } },
+        { {  0.5f, -0.5f, -0.5f }, white, { 1.0f, 0.0f, 0.0f } }, { {  0.5f,  0.5f, -0.5f }, white, { 1.0f, 0.0f, 0.0f } }, { {  0.5f,  0.5f,  0.5f }, white, { 1.0f, 0.0f, 0.0f } }, { {  0.5f, -0.5f,  0.5f }, white, { 1.0f, 0.0f, 0.0f } }
     };
 
     std::vector<std::uint32_t> cubeIndices =
@@ -31,53 +209,62 @@ void AssignmentGame::CreateMeshResources()
 
     CreateMesh(m_meshes[static_cast<std::size_t>(MeshKind::Cube)], cubeVertices, cubeIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // 지형은 PPT의 행/열 기반 그리드 방식을 따라 정점과 삼각형 스트립 인덱스를 분리합니다.
-    constexpr int terrainWidth = GP_TERRAIN_GRID_VERTEX_COUNT;
-    constexpr int terrainLength = GP_TERRAIN_GRID_VERTEX_COUNT;
-    constexpr float cellSpacing = GP_TERRAIN_CELL_METERS * GP_WORLD_UNITS_PER_METER;
-    const float halfWidth = (terrainWidth - 1) * cellSpacing * 0.5f;
-    const float halfLength = (terrainLength - 1) * cellSpacing * 0.5f;
+    // 하이트맵 이미지의 픽셀 수를 그대로 지형 정점 수로 사용합니다.
+    const std::optional<HeightMapData> heightMap = LoadHeightMap();
+    const UINT terrainWidth = heightMap ? heightMap->width : GP_TERRAIN_GRID_VERTEX_COUNT;
+    const UINT terrainLength = heightMap ? heightMap->height : GP_TERRAIN_GRID_VERTEX_COUNT;
+    const float cellX = heightMap ? GP_HEIGHTMAP_CELL_X_METERS * GP_WORLD_UNITS_PER_METER : GP_TERRAIN_CELL_METERS * GP_WORLD_UNITS_PER_METER;
+    const float cellZ = heightMap ? GP_HEIGHTMAP_CELL_Z_METERS * GP_WORLD_UNITS_PER_METER : GP_TERRAIN_CELL_METERS * GP_WORLD_UNITS_PER_METER;
+    const float halfWidth = static_cast<float>(terrainWidth - 1) * cellX * 0.5f;
+    const float halfLength = static_cast<float>(terrainLength - 1) * cellZ * 0.5f;
+
+    m_terrainWidth = terrainWidth;
+    m_terrainLength = terrainLength;
+    m_terrainCellX = cellX;
+    m_terrainCellZ = cellZ;
+    m_terrainHalfWidth = halfWidth;
+    m_terrainHalfLength = halfLength;
+    m_terrainHeights.clear();
+    m_terrainHeights.reserve(static_cast<std::size_t>(terrainWidth) * terrainLength);
 
     std::vector<Vertex> terrainVertices;
-    terrainVertices.reserve(terrainWidth * terrainLength);
-
-    for (int z = 0; z < terrainLength; ++z)
+    terrainVertices.reserve(static_cast<std::size_t>(terrainWidth) * terrainLength);
+    for (UINT z = 0; z < terrainLength; ++z)
     {
-        for (int x = 0; x < terrainWidth; ++x)
+        for (UINT x = 0; x < terrainWidth; ++x)
         {
-            // 현재는 과제 조건대로 평면 높이 0을 사용하고, 추후 높이맵 함수로 교체할 수 있게 위치 계산을 분리합니다.
-            const float worldX = x * cellSpacing - halfWidth;
-            const float worldZ = z * cellSpacing - halfLength;
-            const float height = 0.0f;
-            const float checker = ((x + z) % 2 == 0) ? 0.08f : 0.0f;
-            const XMFLOAT4 terrainColor{ 0.16f + checker, 0.45f + 0.25f * (static_cast<float>(z) / terrainLength), 0.18f, 1.0f };
-            terrainVertices.push_back({ { worldX, height, worldZ }, terrainColor });
+            const float worldX = static_cast<float>(x) * cellX - halfWidth;
+            const float worldZ = static_cast<float>(z) * cellZ - halfLength;
+            const float normalizedHeight = heightMap ? heightMap->samples[static_cast<std::size_t>(z) * terrainWidth + x] : 0.0f;
+            const float height = heightMap ? normalizedHeight * GP_HEIGHTMAP_MAX_HEIGHT_METERS * GP_WORLD_UNITS_PER_METER : 0.0f;
+            const XMFLOAT3 normal = heightMap ? TerrainNormalAt(*heightMap, static_cast<int>(x), static_cast<int>(z)) : XMFLOAT3{ 0.0f, 1.0f, 0.0f };
+            const XMFLOAT4 color = heightMap ? TerrainColor(normalizedHeight) : XMFLOAT4{ 0.16f, 0.45f, 0.18f, 1.0f };
+            m_terrainHeights.push_back(height);
+            terrainVertices.push_back({ { worldX, height, worldZ }, color, normal });
         }
     }
 
     std::vector<std::uint32_t> terrainIndices;
-    terrainIndices.reserve((terrainLength - 1) * terrainWidth * 2);
-
-    for (int z = 0; z < terrainLength - 1; ++z)
+    terrainIndices.reserve(static_cast<std::size_t>(terrainWidth - 1) * (terrainLength - 1) * 6);
+    for (UINT z = 0; z < terrainLength - 1; ++z)
     {
-        // PPT의 삼각형 스트립 아이디어에 맞춰 한 줄은 좌->우, 다음 줄은 우->좌로 진행합니다.
-        if (z % 2 == 0)
+        for (UINT x = 0; x < terrainWidth - 1; ++x)
         {
-            for (int x = 0; x < terrainWidth; ++x)
-            {
-                terrainIndices.push_back(static_cast<std::uint32_t>(z * terrainWidth + x));
-                terrainIndices.push_back(static_cast<std::uint32_t>((z + 1) * terrainWidth + x));
-            }
-        }
-        else
-        {
-            for (int x = terrainWidth - 1; x >= 0; --x)
-            {
-                terrainIndices.push_back(static_cast<std::uint32_t>(z * terrainWidth + x));
-                terrainIndices.push_back(static_cast<std::uint32_t>((z + 1) * terrainWidth + x));
-            }
+            const std::uint32_t topLeft = z * terrainWidth + x;
+            const std::uint32_t topRight = topLeft + 1;
+            const std::uint32_t bottomLeft = (z + 1) * terrainWidth + x;
+            const std::uint32_t bottomRight = bottomLeft + 1;
+            terrainIndices.push_back(topLeft);
+            terrainIndices.push_back(bottomLeft);
+            terrainIndices.push_back(topRight);
+            terrainIndices.push_back(topRight);
+            terrainIndices.push_back(bottomLeft);
+            terrainIndices.push_back(bottomRight);
         }
     }
 
-    CreateMesh(m_meshes[static_cast<std::size_t>(MeshKind::Terrain)], terrainVertices, terrainIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    CreateMesh(m_meshes[static_cast<std::size_t>(MeshKind::Terrain)], terrainVertices, terrainIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    // Apache.txt 모델은 별도 텍스트 로더로 읽고, 실패하면 기존 박스 헬리콥터를 대체 표시로 유지합니다.
+    m_apacheModelLoaded = CreateApacheMesh();
 }
