@@ -25,6 +25,10 @@ namespace
     constexpr float MissileHomingDelaySeconds = 0.55f;
     constexpr float MissileTurnRateRadians = 0.70f;
     constexpr float MissileTerrainCollisionRadius = 0.32f;
+    // 미사일 트레일은 고정 슬롯을 재사용해 매 발사마다 동적 할당이 생기지 않게 합니다.
+    constexpr float MissileTrailSpawnIntervalSeconds = 0.035f;
+    constexpr float MissileTrailDurationSeconds = 0.62f;
+    constexpr float MissileTrailStartSize = 0.48f;
     // 폭발 파티클 수와 지속 시간은 메인 화면과 미사일 폭발이 같은 감각을 갖도록 맞춥니다.
     constexpr int ExplosionParticleCount = 34;
     constexpr float ExplosionDurationSeconds = 0.85f;
@@ -343,6 +347,24 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
                 SpawnExplosion(terrainHit.position, { 1.0f, 0.58f, 0.16f, 1.0f }, 5.0f);
             }
         }
+
+        // 살아 있는 미사일은 뒤쪽에 회색 큐브 트레일을 일정 간격으로 남깁니다.
+        if (bullet.lifeSeconds > 0.0f)
+        {
+            bullet.trailSpawnAccumulator += deltaSeconds;
+            const XMFLOAT3 missileDirection = Collision::Normalize(bullet.velocity);
+            while (bullet.trailSpawnAccumulator >= MissileTrailSpawnIntervalSeconds)
+            {
+                bullet.trailSpawnAccumulator -= MissileTrailSpawnIntervalSeconds;
+                const XMFLOAT3 trailPosition
+                {
+                    bullet.position.x - missileDirection.x * 0.55f,
+                    bullet.position.y - missileDirection.y * 0.55f,
+                    bullet.position.z - missileDirection.z * 0.55f
+                };
+                SpawnMissileTrail(trailPosition, missileDirection);
+            }
+        }
     }
     std::erase_if(m_bullets, [](const Bullet& bullet)
     {
@@ -383,6 +405,24 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
     {
         return explosion.elapsedSeconds >= explosion.durationSeconds;
     });
+
+    // 미사일 트레일 입자는 고정 배열 안에서 수명만 갱신하고 끝난 슬롯은 재사용합니다.
+    for (MissileTrailParticle& particle : m_missileTrails)
+    {
+        if (!particle.active)
+        {
+            continue;
+        }
+
+        particle.elapsedSeconds += deltaSeconds;
+        if (particle.elapsedSeconds >= particle.durationSeconds)
+        {
+            particle.active = false;
+            continue;
+        }
+
+        particle.position = AddVector(particle.position, ScaleVector(particle.velocity, deltaSeconds));
+    }
 
     // 현재 총구 광선이 맞는 지형 또는 오브젝트 위치를 갱신합니다.
     UpdateAimRay();
@@ -492,8 +532,28 @@ void AssignmentGame::FireBulletAtAim()
     bullet.homing = IsTargetIndexValid(m_lockedTargetIndex);
     bullet.targetIndex = bullet.homing ? m_lockedTargetIndex : -1;
     bullet.homingDelaySeconds = bullet.homing ? MissileHomingDelaySeconds : 0.0f;
+    bullet.trailSpawnAccumulator = MissileTrailSpawnIntervalSeconds;
     m_bullets.push_back(bullet);
     m_shotCooldown = 0.18f;
+}
+
+void AssignmentGame::SpawnMissileTrail(const XMFLOAT3& position, const XMFLOAT3& missileDirection)
+{
+    // 순환 인덱스로 오래된 입자를 덮어써 트레일 생성 비용을 일정하게 유지합니다.
+    MissileTrailParticle& particle = m_missileTrails[m_nextMissileTrailIndex];
+    m_nextMissileTrailIndex = (m_nextMissileTrailIndex + 1) % m_missileTrails.size();
+
+    particle.position = position;
+    particle.velocity =
+    {
+        -missileDirection.x * 3.0f,
+        -missileDirection.y * 3.0f + 0.25f,
+        -missileDirection.z * 3.0f
+    };
+    particle.elapsedSeconds = 0.0f;
+    particle.durationSeconds = MissileTrailDurationSeconds;
+    particle.startSize = MissileTrailStartSize;
+    particle.active = true;
 }
 
 void AssignmentGame::SpawnExplosion(const XMFLOAT3& position, const XMFLOAT4& color, float radius)
@@ -574,6 +634,7 @@ void AssignmentGame::BuildLevelScene()
     // 헬리콥터는 Apache 모델을 우선 사용하고, 표적과 탄환은 임시 박스로 렌더링합니다.
     AddHelicopter();
     AddTargets();
+    AddMissileTrails();
     AddBullets();
     AddExplosions();
     AddCrosshair();
@@ -674,6 +735,28 @@ void AssignmentGame::AddTargets()
         }
 
         AddBox(target.position, { 1.0f, 1.6f, 1.0f }, { 0.86f, 0.18f, 0.16f, 1.0f }, m_totalTime * 0.5f);
+    }
+}
+
+void AssignmentGame::AddMissileTrails()
+{
+    // 트레일 입자는 시간이 지날수록 작아지는 회색 큐브로 그려 연기 꼬리처럼 보이게 합니다.
+    for (const MissileTrailParticle& particle : m_missileTrails)
+    {
+        if (!particle.active)
+        {
+            continue;
+        }
+
+        const float t = std::clamp(particle.elapsedSeconds / std::max(0.0001f, particle.durationSeconds), 0.0f, 1.0f);
+        const float size = particle.startSize * (1.0f - t);
+        if (size <= 0.03f)
+        {
+            continue;
+        }
+
+        const float gray = 0.38f + 0.18f * (1.0f - t);
+        AddBox(particle.position, { size, size, size }, { gray, gray, gray, 1.0f }, t * 2.0f, t * 1.3f, t * 1.7f);
     }
 }
 
@@ -965,6 +1048,11 @@ void AssignmentGame::ResetLevel()
     m_hasLastMousePosition = false;
     m_bullets.clear();
     m_explosions.clear();
+    for (MissileTrailParticle& particle : m_missileTrails)
+    {
+        particle.active = false;
+    }
+    m_nextMissileTrailIndex = 0;
     m_targets.clear();
     m_targets.reserve(static_cast<std::size_t>(std::max(0, GP_LEVEL_TARGET_COUNT)));
     for (int targetIndex = 0; targetIndex < GP_LEVEL_TARGET_COUNT; ++targetIndex)

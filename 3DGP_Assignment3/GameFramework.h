@@ -54,6 +54,7 @@ private:
 
     // 한 프레임에서 업로드할 수 있는 최대 3D 도형 수입니다.
     static constexpr UINT MaxDrawItems = 8192;
+    static constexpr std::size_t MaxMissileTrailParticles = 384;
 
     // D3D12 상수 버퍼는 256바이트 정렬이 필요합니다.
     static constexpr UINT ConstantBufferAlignment = 256;
@@ -136,6 +137,7 @@ private:
         DirectX::XMFLOAT3 velocity{};
         float lifeSeconds = 0.0f;
         float homingDelaySeconds = 0.0f;
+        float trailSpawnAccumulator = 0.0f;
         bool homing = false;
         int targetIndex = -1;
     };
@@ -155,6 +157,17 @@ private:
         float elapsedSeconds = 0.0f;
         float durationSeconds = 0.0f;
         float radius = 0.0f;
+    };
+
+    // 미사일 트레일은 고정 슬롯을 재사용하는 간단한 연기 입자입니다.
+    struct MissileTrailParticle
+    {
+        DirectX::XMFLOAT3 position{};
+        DirectX::XMFLOAT3 velocity{};
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        float startSize = 0.0f;
+        bool active = false;
     };
 
     // 메뉴 항목은 표시 문자열과 3D 배치 y값을 보관합니다.
@@ -198,6 +211,7 @@ private:
     void BuildLevelScene();
     void AddHelicopter();
     void AddTargets();
+    void AddMissileTrails();
     void AddBullets();
     void AddExplosions();
     void AddCrosshair();
@@ -206,6 +220,7 @@ private:
     void AddBoxWithWorld(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color);
     void AddText3D(const std::wstring& text, const DirectX::XMFLOAT3& origin, float unitSize, float depth, const DirectX::XMFLOAT4& color, float yaw = 0.0f, bool centered = true, float glyphSpacing = 0.25f);
     void AddExplodingText3D(const std::wstring& text, const DirectX::XMFLOAT3& origin, float unitSize, float depth, const DirectX::XMFLOAT4& color, float yaw, float explosionTime);
+    void SpawnMissileTrail(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT3& missileDirection);
     void SpawnExplosion(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT4& color, float radius);
     bool HitStartName(int x, int y) const;
     int HitMenuEntry(int x, int y) const;
@@ -307,6 +322,8 @@ private:
     std::vector<Bullet> m_bullets;
     std::vector<Target> m_targets;
     std::vector<Explosion> m_explosions;
+    std::array<MissileTrailParticle, MaxMissileTrailParticles> m_missileTrails{};
+    std::size_t m_nextMissileTrailIndex = 0;
     int m_lockedTargetIndex = -1;
     bool m_lockPinned = false;
 
