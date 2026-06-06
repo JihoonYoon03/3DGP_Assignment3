@@ -151,6 +151,9 @@
   <ItemGroup>
     <ClCompile Include="3DGP_Assignment3.cpp" />
     <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="Device.cpp" />
+    <ClCompile Include="Render.cpp" />
+    <ClCompile Include="Utility.cpp" />
     <ClCompile Include="GameFramework.cpp" />
     <ClCompile Include="GameObject.cpp" />
     <ClCompile Include="Maps.cpp" />

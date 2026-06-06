@@ -20,9 +20,14 @@ namespace
     // 메뉴 텍스트 크기는 렌더링과 클릭 판정이 같은 값을 쓰도록 한 곳에 둡니다.
     constexpr float MenuTextUnitSize = 0.066f;
     constexpr float MenuTextDepth = 0.085f;
+    constexpr float MenuGlyphSpacing = 0.25f;
     // 미사일은 발사 직후 잠시 직진한 뒤 천천히 선회하며 락온 대상을 추적합니다.
     constexpr float MissileHomingDelaySeconds = 0.55f;
     constexpr float MissileTurnRateRadians = 0.70f;
+    constexpr float MissileTerrainCollisionRadius = 0.32f;
+    // 폭발 파티클 수와 지속 시간은 메인 화면과 미사일 폭발이 같은 감각을 갖도록 맞춥니다.
+    constexpr int ExplosionParticleCount = 34;
+    constexpr float ExplosionDurationSeconds = 0.85f;
 
     // 5x7 도트 글리프 하나를 표현하는 타입입니다.
     using GlyphPattern = std::array<std::string_view, 7>;
@@ -128,7 +133,7 @@ namespace
     }
 
     // 3D 도트 글씨가 실제 월드에서 차지하는 가로 폭을 계산합니다.
-    float TextWorldWidth(const std::wstring& text, float unitSize)
+    float TextWorldWidth(const std::wstring& text, float unitSize, float glyphSpacing = 0.25f)
     {
         if (text.empty())
         {
@@ -138,10 +143,23 @@ namespace
         float width = 0.0f;
         for (const wchar_t ch : text)
         {
-            width += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + 0.25f;
+            width += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + glyphSpacing;
         }
 
-        return std::max(0.0f, width - 0.25f) * unitSize;
+        return std::max(0.0f, width - glyphSpacing) * unitSize;
+    }
+
+    // 폭발 파티클이 x/y/z 축으로 서로 다른 방향에 흩어지도록 결정적인 방향 벡터를 만듭니다.
+    XMFLOAT3 BurstDirection(float xBias, float yBias, int seed)
+    {
+        const float seedValue = static_cast<float>(seed);
+        const float xNoise = std::cos(seedValue * 3.91f) * 0.35f;
+        const float yNoise = std::sin(seedValue * 2.17f) * 0.28f;
+        const float zNoise = std::sin(seedValue * 5.13f + xBias * 7.0f - yBias * 4.0f) * 0.95f;
+        const XMVECTOR direction = XMVector3Normalize(XMVectorSet(xBias + xNoise, yBias + yNoise + 0.12f, zNoise, 0.0f));
+        XMFLOAT3 result{};
+        XMStoreFloat3(&result, direction);
+        return result;
     }
 
     // 두 3D 벡터를 더합니다.
@@ -177,12 +195,6 @@ namespace
             });
     }
 
-    // 상수 버퍼 크기를 D3D12가 요구하는 256바이트 단위로 올림합니다.
-    UINT AlignConstantBufferSize(UINT byteSize)
-    {
-        constexpr UINT alignment = 256;
-        return (byteSize + alignment - 1) & ~(alignment - 1);
-    }
 }
 
 void AssignmentGame::Update(float deltaSeconds)
@@ -308,8 +320,29 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
             }
         }
 
+        const XMFLOAT3 previousPosition = bullet.position;
         bullet.position = AddVector(bullet.position, ScaleVector(bullet.velocity, deltaSeconds));
         bullet.lifeSeconds -= deltaSeconds;
+
+        // 미사일이 빠르게 움직여도 지형을 통과하지 않도록 이번 프레임 이동 구간을 레이로 검사합니다.
+        const float travelDistanceSquared = DistanceSquared(previousPosition, bullet.position);
+        if (travelDistanceSquared > 0.000001f)
+        {
+            const float travelDistance = std::sqrt(travelDistanceSquared);
+            const XMFLOAT3 travelDirection = Collision::Normalize(
+                {
+                    bullet.position.x - previousPosition.x,
+                    bullet.position.y - previousPosition.y,
+                    bullet.position.z - previousPosition.z
+                });
+            Collision::HitResult terrainHit{};
+            if (RaycastTerrain({ previousPosition, travelDirection }, travelDistance, terrainHit, MissileTerrainCollisionRadius))
+            {
+                bullet.position = terrainHit.position;
+                bullet.lifeSeconds = 0.0f;
+                SpawnExplosion(terrainHit.position, { 1.0f, 0.58f, 0.16f, 1.0f }, 5.0f);
+            }
+        }
     }
     std::erase_if(m_bullets, [](const Bullet& bullet)
     {
@@ -319,6 +352,11 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
     // 탄환과 표적의 간단한 구형 충돌을 검사합니다.
     for (Bullet& bullet : m_bullets)
     {
+        if (bullet.lifeSeconds <= 0.0f)
+        {
+            continue;
+        }
+
         for (Target& target : m_targets)
         {
             const float hitRadius = bullet.homing ? 4.0f : 1.8f;
@@ -326,6 +364,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
             {
                 target.active = false;
                 bullet.lifeSeconds = 0.0f;
+                SpawnExplosion({ target.position.x, target.position.y + 0.75f, target.position.z }, { 1.0f, 0.42f, 0.10f, 1.0f }, 6.5f);
                 break;
             }
         }
@@ -333,6 +372,16 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
     std::erase_if(m_bullets, [](const Bullet& bullet)
     {
         return bullet.lifeSeconds <= 0.0f;
+    });
+
+    // 폭발 파티클의 수명을 갱신하고 끝난 효과를 제거합니다.
+    for (Explosion& explosion : m_explosions)
+    {
+        explosion.elapsedSeconds += deltaSeconds;
+    }
+    std::erase_if(m_explosions, [](const Explosion& explosion)
+    {
+        return explosion.elapsedSeconds >= explosion.durationSeconds;
     });
 
     // 현재 총구 광선이 맞는 지형 또는 오브젝트 위치를 갱신합니다.
@@ -447,6 +496,18 @@ void AssignmentGame::FireBulletAtAim()
     m_shotCooldown = 0.18f;
 }
 
+void AssignmentGame::SpawnExplosion(const XMFLOAT3& position, const XMFLOAT4& color, float radius)
+{
+    // 폭발 요청은 수명과 크기만 저장하고 실제 파티클 배치는 렌더 단계에서 결정합니다.
+    Explosion explosion{};
+    explosion.position = position;
+    explosion.color = color;
+    explosion.elapsedSeconds = 0.0f;
+    explosion.durationSeconds = ExplosionDurationSeconds;
+    explosion.radius = radius;
+    m_explosions.push_back(explosion);
+}
+
 void AssignmentGame::BuildDrawItems()
 {
     // 프레임마다 현재 씬에 필요한 도형만 새로 채웁니다.
@@ -497,7 +558,7 @@ void AssignmentGame::BuildMenuScene()
         const int hoveredIndex = HitMenuEntry(m_mouseX, m_mouseY);
         const bool hovered = hoveredIndex >= 0 && m_menuEntries[hoveredIndex].label == entry.label;
         const XMFLOAT4 color = hovered ? XMFLOAT4{ 1.0f, 0.82f, 0.25f, 1.0f } : XMFLOAT4{ 0.68f, 0.86f, 0.95f, 1.0f };
-        AddText3D(entry.label, { 0.0f, entry.y, 0.0f }, MenuTextUnitSize, MenuTextDepth, color);
+        AddText3D(entry.label, { 0.0f, entry.y, 0.0f }, MenuTextUnitSize, MenuTextDepth, color, 0.0f, true, MenuGlyphSpacing);
     }
 }
 
@@ -514,6 +575,7 @@ void AssignmentGame::BuildLevelScene()
     AddHelicopter();
     AddTargets();
     AddBullets();
+    AddExplosions();
     AddCrosshair();
     AddLockOnIndicator();
 }
@@ -629,6 +691,39 @@ void AssignmentGame::AddBullets()
     }
 }
 
+void AssignmentGame::AddExplosions()
+{
+    // 폭발은 중심에서 바깥으로 퍼지는 큐브 파티클로 표현합니다.
+    for (const Explosion& explosion : m_explosions)
+    {
+        const float t = std::clamp(explosion.elapsedSeconds / std::max(0.0001f, explosion.durationSeconds), 0.0f, 1.0f);
+        const float burst = 1.0f - (1.0f - t) * (1.0f - t);
+        const float fadeScale = std::max(0.0f, 1.0f - t);
+
+        for (int particleIndex = 0; particleIndex < ExplosionParticleCount; ++particleIndex)
+        {
+            const float seed = static_cast<float>(particleIndex);
+            const XMFLOAT3 direction = BurstDirection(std::cos(seed * 0.73f), std::sin(seed * 1.11f), particleIndex + 17);
+            const float distanceScale = explosion.radius * (0.35f + static_cast<float>(particleIndex % 7) * 0.08f) * burst;
+            const XMFLOAT3 position
+            {
+                explosion.position.x + direction.x * distanceScale,
+                explosion.position.y + direction.y * distanceScale,
+                explosion.position.z + direction.z * distanceScale
+            };
+            const float particleSize = std::max(0.14f, explosion.radius * 0.075f * fadeScale);
+            const XMFLOAT4 color
+            {
+                std::min(1.0f, explosion.color.x + static_cast<float>(particleIndex % 3) * 0.08f),
+                std::max(0.18f, explosion.color.y * (0.72f + fadeScale * 0.28f)),
+                std::max(0.04f, explosion.color.z * fadeScale),
+                1.0f
+            };
+            AddBox(position, { particleSize, particleSize, particleSize }, color, seed * 0.37f + t * 5.0f, seed * 0.19f + t * 4.0f, seed * 0.23f);
+        }
+    }
+}
+
 void AssignmentGame::AddCrosshair()
 {
     // 조준 광선 계산 결과가 없으면 크로스헤어를 표시하지 않습니다.
@@ -694,17 +789,17 @@ void AssignmentGame::AddBoxWithWorld(const XMMATRIX& world, const XMFLOAT4& colo
     m_drawItems.push_back(item);
 }
 
-void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, bool centered)
+void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, bool centered, float glyphSpacing)
 {
     // 문자열 전체 폭을 먼저 계산해 중앙 정렬을 구현합니다.
     float totalUnits = 0.0f;
     for (wchar_t ch : text)
     {
-        totalUnits += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + 0.25f;
+        totalUnits += (ch == L' ') ? 2.2f : GlyphWidth(FindGlyph(ch)) + glyphSpacing;
     }
     if (!text.empty())
     {
-        totalUnits -= 0.25f;
+        totalUnits -= glyphSpacing;
     }
 
     const float startX = centered ? -totalUnits * unitSize * 0.5f : 0.0f;
@@ -738,7 +833,7 @@ void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin,
             }
         }
 
-        cursor += GlyphWidth(glyph) + 0.25f;
+        cursor += GlyphWidth(glyph) + glyphSpacing;
     }
 }
 
@@ -781,9 +876,7 @@ void AssignmentGame::AddExplodingText3D(const std::wstring& text, const XMFLOAT3
 
                 const float localX = startX + (cursor + static_cast<float>(col)) * unitSize;
                 const float localY = (3.0f - static_cast<float>(row)) * unitSize;
-                const XMVECTOR dir = XMVector3Normalize(XMVectorSet(localX, localY + 0.15f, 0.35f, 0.0f));
-                XMFLOAT3 direction{};
-                XMStoreFloat3(&direction, dir);
+                const XMFLOAT3 direction = BurstDirection(localX, localY + 0.15f, row * 37 + col * 11 + static_cast<int>(cursor * 13.0f));
                 const float burst = t * t * 3.0f;
                 const XMMATRIX spin = XMMatrixRotationRollPitchYaw(t * row, t * col, t * (row + col));
                 const XMMATRIX world =
@@ -828,7 +921,7 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
     for (std::size_t i = 0; i < m_menuEntries.size(); ++i)
     {
         const MenuEntry& entry = m_menuEntries[i];
-        const float halfWidth = TextWorldWidth(entry.label, MenuTextUnitSize) * 0.5f + MenuTextUnitSize * 0.6f;
+        const float halfWidth = TextWorldWidth(entry.label, MenuTextUnitSize, MenuGlyphSpacing) * 0.5f + MenuTextUnitSize * 0.6f;
         const float halfHeight = 7.0f * MenuTextUnitSize * 0.5f + MenuTextUnitSize * 0.6f;
         const XMFLOAT2 topLeft = projectToScreen({ -halfWidth, entry.y + halfHeight, 0.0f });
         const XMFLOAT2 bottomRight = projectToScreen({ halfWidth, entry.y - halfHeight, 0.0f });
@@ -871,14 +964,19 @@ void AssignmentGame::ResetLevel()
     m_lockPinned = false;
     m_hasLastMousePosition = false;
     m_bullets.clear();
-    m_targets =
+    m_explosions.clear();
+    m_targets.clear();
+    m_targets.reserve(static_cast<std::size_t>(std::max(0, GP_LEVEL_TARGET_COUNT)));
+    for (int targetIndex = 0; targetIndex < GP_LEVEL_TARGET_COUNT; ++targetIndex)
     {
-        { placeOnTerrain(-usableHalfX * 0.48f, usableHalfZ * 0.08f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
-        { placeOnTerrain(0.0f, usableHalfZ * 0.30f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
-        { placeOnTerrain(usableHalfX * 0.48f, usableHalfZ * 0.08f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
-        { placeOnTerrain(-usableHalfX * 0.32f, usableHalfZ * 0.56f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true },
-        { placeOnTerrain(usableHalfX * 0.32f, usableHalfZ * 0.60f, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true }
-    };
+        // 적은 시작 위치보다 앞쪽 지형에 나선형으로 분산해 서로 과하게 겹치지 않게 합니다.
+        const float normalizedIndex = (GP_LEVEL_TARGET_COUNT <= 1) ? 0.0f : static_cast<float>(targetIndex) / static_cast<float>(GP_LEVEL_TARGET_COUNT - 1);
+        const float angle = static_cast<float>(targetIndex) * 2.399963f;
+        const float spread = 0.28f + normalizedIndex * 0.60f;
+        const float x = std::sin(angle) * usableHalfX * 0.72f * spread;
+        const float z = usableHalfZ * (-0.04f + normalizedIndex * 0.78f) + std::cos(angle) * usableHalfZ * 0.07f;
+        m_targets.push_back({ placeOnTerrain(x, z, GP_ENEMY_TERRAIN_CLEARANCE_METERS), true });
+    }
     UpdateAimRay();
 }
 
@@ -937,34 +1035,76 @@ float AssignmentGame::TerrainHeightAt(float worldX, float worldZ) const
     return h0 + (h1 - h0) * tz;
 }
 
-bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit) const
+bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit, float heightOffset) const
 {
+    hit = {};
+    if (maxDistance <= 0.0f)
+    {
+        return false;
+    }
+
     // 하이트맵이 없으면 기존 y=0 평면 충돌을 그대로 사용합니다.
     if (m_terrainHeights.empty())
     {
-        hit = Collision::RaycastPlaneY(ray, 0.0f, maxDistance);
+        hit = Collision::RaycastPlaneY(ray, heightOffset, maxDistance);
+        if (hit.hit)
+        {
+            hit.position.y = 0.0f;
+        }
         return hit.hit;
     }
+
+    const auto isInsideTerrain = [this](float worldX, float worldZ)
+    {
+        const float localX = (worldX + m_terrainHalfWidth) / m_terrainCellX;
+        const float localZ = (worldZ + m_terrainHalfLength) / m_terrainCellZ;
+        return localX >= 0.0f &&
+            localZ >= 0.0f &&
+            localX <= static_cast<float>(m_terrainWidth - 1) &&
+            localZ <= static_cast<float>(m_terrainLength - 1);
+    };
+
+    const auto sampleDelta = [this, heightOffset, &isInsideTerrain](const XMFLOAT3& point, float& delta)
+    {
+        if (!isInsideTerrain(point.x, point.z))
+        {
+            return false;
+        }
+
+        // heightOffset은 미사일 같은 부피 있는 물체가 표면에 닿는 높이를 보정합니다.
+        delta = point.y - (TerrainHeightAt(point.x, point.z) + heightOffset);
+        return true;
+    };
 
     const float step = std::max(0.35f, std::min(m_terrainCellX, m_terrainCellZ) * 0.5f);
     float previousDistance = 0.0f;
     XMFLOAT3 previousPoint = ray.origin;
-    float previousDelta = previousPoint.y - TerrainHeightAt(previousPoint.x, previousPoint.z);
+    float previousDelta = 0.0f;
+    bool hasPrevious = sampleDelta(previousPoint, previousDelta);
+    if (hasPrevious && previousDelta <= 0.0f)
+    {
+        hit.hit = true;
+        hit.distance = 0.0f;
+        hit.position = previousPoint;
+        hit.position.y = TerrainHeightAt(previousPoint.x, previousPoint.z);
+        return true;
+    }
 
-    for (float distance = step; distance <= maxDistance; distance += step)
+    for (float distance = std::min(step, maxDistance); ; distance = std::min(distance + step, maxDistance))
     {
         const XMFLOAT3 point = Collision::PointAt(ray, distance);
-        const float delta = point.y - TerrainHeightAt(point.x, point.z);
-        if (previousDelta >= 0.0f && delta <= 0.0f)
+        float delta = 0.0f;
+        const bool hasSample = sampleDelta(point, delta);
+        if (hasPrevious && hasSample && previousDelta >= 0.0f && delta <= 0.0f)
         {
             float low = previousDistance;
             float high = distance;
-            for (int iteration = 0; iteration < 8; ++iteration)
+            for (int iteration = 0; iteration < 10; ++iteration)
             {
                 const float mid = (low + high) * 0.5f;
                 const XMFLOAT3 midPoint = Collision::PointAt(ray, mid);
-                const float midDelta = midPoint.y - TerrainHeightAt(midPoint.x, midPoint.z);
-                if (midDelta > 0.0f)
+                float midDelta = 0.0f;
+                if (!sampleDelta(midPoint, midDelta) || midDelta > 0.0f)
                 {
                     low = mid;
                 }
@@ -981,12 +1121,32 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
             return true;
         }
 
-        previousDistance = distance;
-        previousPoint = point;
-        previousDelta = delta;
-    }
+        if (hasSample)
+        {
+            if (delta <= 0.0f)
+            {
+                hit.hit = true;
+                hit.distance = distance;
+                hit.position = point;
+                hit.position.y = TerrainHeightAt(point.x, point.z);
+                return true;
+            }
 
-    hit = {};
+            previousDistance = distance;
+            previousPoint = point;
+            previousDelta = delta;
+            hasPrevious = true;
+        }
+        else
+        {
+            hasPrevious = false;
+        }
+
+        if (distance >= maxDistance)
+        {
+            break;
+        }
+    }
     return false;
 }
 

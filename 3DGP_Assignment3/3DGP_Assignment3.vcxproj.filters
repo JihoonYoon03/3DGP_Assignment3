@@ -65,6 +65,9 @@
     <ClCompile Include="Camera.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="D3DDevice.cpp" />
+    <ClCompile Include="D3DRender.cpp" />
+    <ClCompile Include="D3DUtility.cpp" />
     <ClCompile Include="GameFramework.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>

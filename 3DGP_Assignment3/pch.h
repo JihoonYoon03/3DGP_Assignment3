@@ -50,3 +50,6 @@ inline constexpr float GP_LIGHT_AMBIENT_STRENGTH = 0.32f;
 inline constexpr float GP_LIGHT_DIFFUSE_STRENGTH = 0.78f;
 inline constexpr float GP_LIGHT_SPECULAR_STRENGTH = 0.35f;
 inline constexpr float GP_LIGHT_SPECULAR_POWER = 32.0f;
+
+// Level-1에 배치할 적 개수입니다. 값을 바꾸면 ResetLevel에서 자동으로 재배치합니다.
+inline constexpr int GP_LEVEL_TARGET_COUNT = 12;

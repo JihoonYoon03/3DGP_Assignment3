@@ -147,6 +147,16 @@ private:
         bool active = true;
     };
 
+    // 폭발 효과는 일정 시간 동안 흩어지는 큐브 파티클 묶음입니다.
+    struct Explosion
+    {
+        DirectX::XMFLOAT3 position{};
+        DirectX::XMFLOAT4 color{};
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        float radius = 0.0f;
+    };
+
     // 메뉴 항목은 표시 문자열과 3D 배치 y값을 보관합니다.
     struct MenuEntry
     {
@@ -163,6 +173,7 @@ private:
     void UploadObjectConstants(const DirectX::XMMATRIX& viewProjection);
     void WaitForGpu();
     void FlushCommandQueue();
+    static UINT AlignConstantBufferSize(UINT byteSize);
     static D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type);
     static D3D12_RESOURCE_DESC BufferResourceDesc(UINT64 byteSize);
     static D3D12_RESOURCE_BARRIER TransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES beforeState, D3D12_RESOURCE_STATES afterState);
@@ -188,12 +199,14 @@ private:
     void AddHelicopter();
     void AddTargets();
     void AddBullets();
+    void AddExplosions();
     void AddCrosshair();
     void AddLockOnIndicator();
     void AddBox(const DirectX::XMFLOAT3& center, const DirectX::XMFLOAT3& size, const DirectX::XMFLOAT4& color, float yaw = 0.0f, float pitch = 0.0f, float roll = 0.0f);
     void AddBoxWithWorld(const DirectX::XMMATRIX& world, const DirectX::XMFLOAT4& color);
-    void AddText3D(const std::wstring& text, const DirectX::XMFLOAT3& origin, float unitSize, float depth, const DirectX::XMFLOAT4& color, float yaw = 0.0f, bool centered = true);
+    void AddText3D(const std::wstring& text, const DirectX::XMFLOAT3& origin, float unitSize, float depth, const DirectX::XMFLOAT4& color, float yaw = 0.0f, bool centered = true, float glyphSpacing = 0.25f);
     void AddExplodingText3D(const std::wstring& text, const DirectX::XMFLOAT3& origin, float unitSize, float depth, const DirectX::XMFLOAT4& color, float yaw, float explosionTime);
+    void SpawnExplosion(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT4& color, float radius);
     bool HitStartName(int x, int y) const;
     int HitMenuEntry(int x, int y) const;
     void ResetLevel();
@@ -201,7 +214,7 @@ private:
     bool IsTargetIndexValid(int targetIndex) const;
     float ScreenConstantScaleAt(const DirectX::XMFLOAT3& position, float scalePerMeter) const;
     float TerrainHeightAt(float worldX, float worldZ) const;
-    bool RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit) const;
+    bool RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit, float heightOffset = 0.0f) const;
     DirectX::XMFLOAT3 LevelCameraPosition() const;
     DirectX::XMFLOAT3 ForwardDirection() const;
     DirectX::XMFLOAT3 MuzzlePosition() const;
@@ -293,6 +306,7 @@ private:
     float m_shotCooldown = 0.0f;
     std::vector<Bullet> m_bullets;
     std::vector<Target> m_targets;
+    std::vector<Explosion> m_explosions;
     int m_lockedTargetIndex = -1;
     bool m_lockPinned = false;
 
