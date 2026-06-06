@@ -3,10 +3,63 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
-#include <cstring>
+#include <array>
+#include <filesystem>
+#include <optional>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
+
+namespace
+{
+    // 런타임에서 읽을 기본 HLSL 파일 이름입니다.
+    constexpr const wchar_t* DefaultShaderFileName = L"Default.hlsl";
+
+    // 실행 파일이 있는 폴더를 기준으로 셰이더 후보 경로를 만들 때 사용합니다.
+    std::filesystem::path ExecutableDirectory()
+    {
+        std::array<wchar_t, MAX_PATH> modulePath{};
+        const DWORD length = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+        if (length == 0 || length >= modulePath.size())
+        {
+            return {};
+        }
+
+        return std::filesystem::path(modulePath.data()).parent_path();
+    }
+
+    // Visual Studio 실행, 솔루션 루트 실행, 빌드 출력 폴더 실행을 모두 고려해 셰이더 파일을 찾습니다.
+    std::optional<std::filesystem::path> FindDefaultShaderPath()
+    {
+        std::vector<std::filesystem::path> candidates =
+        {
+            std::filesystem::path(L"Shaders") / DefaultShaderFileName,
+            std::filesystem::path(L"3DGP_Assignment3") / L"Shaders" / DefaultShaderFileName,
+            std::filesystem::path(L"..") / L"Shaders" / DefaultShaderFileName,
+            std::filesystem::path(L"..") / L".." / L"3DGP_Assignment3" / L"Shaders" / DefaultShaderFileName
+        };
+
+        const std::filesystem::path exeDirectory = ExecutableDirectory();
+        if (!exeDirectory.empty())
+        {
+            candidates.push_back(exeDirectory / L"Shaders" / DefaultShaderFileName);
+            candidates.push_back(exeDirectory / L".." / L"Shaders" / DefaultShaderFileName);
+            candidates.push_back(exeDirectory / L".." / L".." / L"3DGP_Assignment3" / L"Shaders" / DefaultShaderFileName);
+        }
+
+        for (const std::filesystem::path& candidate : candidates)
+        {
+            std::error_code error;
+            if (std::filesystem::exists(candidate, error))
+            {
+                return candidate;
+            }
+        }
+
+        return std::nullopt;
+    }
+}
 
 
 void AssignmentGame::CreatePipelineState()
@@ -30,77 +83,23 @@ void AssignmentGame::CreatePipelineState()
     ThrowIfFailed(D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob));
     ThrowIfFailed(m_device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature)));
 
-    // 앰비언트, 디퓨즈, 스페큘러 항을 갖는 방향성 광원 셰이더입니다.
-    const char* shaderSource = R"(
-cbuffer ObjectConstants : register(b0)
-{
-    float4x4 gWorld;
-    float4x4 gWorldInverseTranspose;
-    float4x4 gWorldViewProjection;
-    float4 gColor;
-    float4 gCameraPosition;
-    float4 gLightDirection;
-    float4 gAmbientColor;
-    float4 gDiffuseColor;
-    float4 gSpecularColor;
-    float4 gLightingOptions;
-};
-
-struct VertexIn
-{
-    float3 position : POSITION;
-    float4 color : COLOR;
-    float3 normal : NORMAL;
-};
-
-struct VertexOut
-{
-    float4 position : SV_POSITION;
-    float4 color : COLOR;
-    float3 worldPosition : WORLDPOSITION;
-    float3 normal : NORMAL;
-};
-
-VertexOut VSMain(VertexIn input)
-{
-    VertexOut output;
-    float4 worldPosition = mul(float4(input.position, 1.0f), gWorld);
-    output.position = mul(float4(input.position, 1.0f), gWorldViewProjection);
-    output.color = input.color * gColor;
-    output.worldPosition = worldPosition.xyz;
-    output.normal = normalize(mul(float4(input.normal, 0.0f), gWorldInverseTranspose).xyz);
-    return output;
-}
-
-float4 PSMain(VertexOut input) : SV_TARGET
-{
-    float3 normal = normalize(input.normal);
-    float3 lightToSurface = normalize(gLightDirection.xyz);
-    float3 surfaceToLight = -lightToSurface;
-    float diffuseFactor = saturate(dot(normal, surfaceToLight));
-
-    float3 viewDirection = normalize(gCameraPosition.xyz - input.worldPosition);
-    float3 reflectDirection = reflect(lightToSurface, normal);
-    float specularFactor = pow(saturate(dot(viewDirection, reflectDirection)), gLightingOptions.x);
-
-    float3 litColor =
-        gAmbientColor.rgb +
-        gDiffuseColor.rgb * diffuseFactor +
-        gSpecularColor.rgb * specularFactor;
-    return float4(input.color.rgb * litColor, input.color.a);
-}
-)";
-
     UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if defined(_DEBUG)
     // Debug 빌드에서는 셰이더 디버깅 정보를 남깁니다.
     compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
+    // 셰이더는 별도 HLSL 파일에서 읽어와 정점/픽셀 엔트리 포인트를 각각 컴파일합니다.
+    const std::optional<std::filesystem::path> shaderPath = FindDefaultShaderPath();
+    if (!shaderPath)
+    {
+        ThrowIfFailed(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND));
+    }
+
     ComPtr<ID3DBlob> vertexShader;
     ComPtr<ID3DBlob> pixelShader;
-    ThrowIfFailed(D3DCompile(shaderSource, std::strlen(shaderSource), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorBlob));
-    ThrowIfFailed(D3DCompile(shaderSource, std::strlen(shaderSource), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorBlob));
+    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorBlob));
+    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorBlob));
 
     // 정점 입력 레이아웃은 위치, 색상, 노멀 세 요소로 구성됩니다.
     D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
@@ -221,7 +220,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
     {
         const DrawItem& item = m_drawItems[itemIndex];
         const MeshResource* mesh = &m_meshes[static_cast<std::size_t>(item.mesh)];
-        if (item.mesh == MeshKind::Apache)
+        if (item.mesh == MeshType::Apache)
         {
             if (item.meshPartIndex >= m_apacheParts.size())
             {

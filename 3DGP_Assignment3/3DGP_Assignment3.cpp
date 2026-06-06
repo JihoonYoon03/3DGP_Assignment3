@@ -19,8 +19,8 @@
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
-HWND g_hWnd = nullptr;                          // D3D12가 렌더링할 주 창입니다.
-std::unique_ptr<AssignmentGame> g_game;          // 과제 3 게임 객체입니다.
+HWND g_hWnd = nullptr;
+std::unique_ptr<AssignmentGame> g_game;
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -64,7 +64,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     MSG msg{};
     auto previousTime = std::chrono::steady_clock::now();
 
-    // PeekMessage 기반 루프를 사용해 메시지가 없을 때도 매 프레임 렌더링합니다.
     while (msg.message != WM_QUIT)
     {
         if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))

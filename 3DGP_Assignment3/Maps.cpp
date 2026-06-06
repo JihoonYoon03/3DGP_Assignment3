@@ -1,4 +1,4 @@
-#include "GameFramework.h"
+﻿#include "GameFramework.h"
 
 #include <algorithm>
 #include <array>
@@ -207,7 +207,7 @@ void AssignmentGame::CreateMeshResources()
         20, 21, 22, 20, 22, 23
     };
 
-    CreateMesh(m_meshes[static_cast<std::size_t>(MeshKind::Cube)], cubeVertices, cubeIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    CreateMesh(m_meshes[static_cast<std::size_t>(MeshType::Cube)], cubeVertices, cubeIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     // 하이트맵 이미지의 픽셀 수를 그대로 지형 정점 수로 사용합니다.
     const std::optional<HeightMapData> heightMap = LoadHeightMap();
@@ -263,7 +263,7 @@ void AssignmentGame::CreateMeshResources()
         }
     }
 
-    CreateMesh(m_meshes[static_cast<std::size_t>(MeshKind::Terrain)], terrainVertices, terrainIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    CreateMesh(m_meshes[static_cast<std::size_t>(MeshType::Terrain)], terrainVertices, terrainIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     // Apache.txt 모델은 별도 텍스트 로더로 읽고, 실패하면 기존 박스 헬리콥터를 대체 표시로 유지합니다.
     m_apacheModelLoaded = CreateApacheMesh();

@@ -1,4 +1,4 @@
-#include "GameFramework.h"
+﻿#include "GameFramework.h"
 
 #include <algorithm>
 
@@ -31,12 +31,11 @@ AssignmentGame::~AssignmentGame()
 
 void AssignmentGame::Initialize(HWND hwnd, UINT width, UINT height)
 {
-    // 창 정보와 기본 해상도를 저장합니다.
+    // 창 정보와 기본 해상도를 저장
     m_hwnd = hwnd;
     m_width = std::max(1u, width);
     m_height = std::max(1u, height);
 
-    // PDF 메뉴 항목 순서를 유지하되, 항목 사이 세로 간격을 넓게 둡니다.
     m_menuEntries =
     {
         { L"TUTORIAL", 1.65f },
@@ -47,7 +46,6 @@ void AssignmentGame::Initialize(HWND hwnd, UINT width, UINT height)
         { L"END", -2.10f }
     };
 
-    // 장치, 파이프라인, 메시를 차례로 준비합니다.
     CreateDeviceResources();
     CreateWindowSizeDependentResources();
     CreatePipelineState();
@@ -57,7 +55,6 @@ void AssignmentGame::Initialize(HWND hwnd, UINT width, UINT height)
 
 void AssignmentGame::Tick(float deltaSeconds)
 {
-    // 프레임 시간이 튀면 물리 이동이 과도해지므로 적당히 제한합니다.
     const float clampedDelta = std::clamp(deltaSeconds, 0.0f, 0.05f);
     m_totalTime += clampedDelta;
 
@@ -72,13 +69,11 @@ void AssignmentGame::Tick(float deltaSeconds)
 
 void AssignmentGame::OnResize(UINT width, UINT height)
 {
-    // 최소화 상태에서는 0 크기가 들어올 수 있으므로 렌더 버퍼를 만들지 않습니다.
     if (width == 0 || height == 0 || !m_device || !m_swapChain)
     {
         return;
     }
 
-    // 크기 변경 전에 GPU가 기존 버퍼 사용을 끝내도록 기다립니다.
     m_width = width;
     m_height = height;
     FlushCommandQueue();
@@ -87,13 +82,13 @@ void AssignmentGame::OnResize(UINT width, UINT height)
 
 void AssignmentGame::OnKeyDown(WPARAM key)
 {
-    // 키 코드가 배열 범위 안이면 현재 눌림 상태를 기록합니다.
+    // 키 눌림 상태를 기록
     if (key < m_keyDown.size())
     {
         m_keyDown[key] = true;
     }
 
-    // Level-1에서 Esc를 누르면 PDF 요구사항대로 메뉴 화면으로 복귀합니다.
+    // Level 1에서 Esc를 누르면 메뉴 화면으로 복귀
     if (key == VK_ESCAPE && m_scene == SceneMode::Level1)
     {
         SetLevelCursorCapture(false);
@@ -103,7 +98,7 @@ void AssignmentGame::OnKeyDown(WPARAM key)
 
 void AssignmentGame::OnKeyUp(WPARAM key)
 {
-    // 키 코드가 배열 범위 안이면 눌림 상태를 해제합니다.
+    // 키 눌림 상태를 해제
     if (key < m_keyDown.size())
     {
         m_keyDown[key] = false;
@@ -112,11 +107,11 @@ void AssignmentGame::OnKeyUp(WPARAM key)
 
 void AssignmentGame::OnMouseMove(int x, int y)
 {
-    // 화면 좌표는 시작 이름과 메뉴 항목의 선택 판정에 사용합니다.
+    // 화면 좌표는 시작 이름과 메뉴 항목의 선택 판정에 사용
     m_mouseX = x;
     m_mouseY = y;
 
-    // Level-1에서는 마우스 이동량으로 헬리콥터의 yaw와 pitch를 조작합니다.
+    // 마우스로 헬리콥터의 yaw와 pitch를 조작
     if (m_scene == SceneMode::Level1)
     {
         if (m_hasLastMousePosition)
@@ -131,7 +126,7 @@ void AssignmentGame::OnMouseMove(int x, int y)
         m_lastMouseY = y;
         m_hasLastMousePosition = true;
 
-        // 커서를 계속 중앙으로 되돌려 실제 커서가 화면 밖이나 가장자리로 나가지 않게 합니다.
+        // 커서를 중앙에 고정
         RECT clientRect{};
         GetClientRect(m_hwnd, &clientRect);
         const int centerX = (clientRect.right - clientRect.left) / 2;
@@ -153,14 +148,14 @@ void AssignmentGame::OnMouseMove(int x, int y)
 
 void AssignmentGame::OnMouseDown(int x, int y)
 {
-    // Level-1에서는 왼쪽 클릭으로 현재 조준점 방향에 탄환을 발사합니다.
+    // 현재 조준점 방향에 투사체를 발사
     if (m_scene == SceneMode::Level1)
     {
         FireBulletAtAim();
         return;
     }
 
-    // 시작 화면에서는 회전하는 이름을 클릭하면 폭발 전환을 시작합니다.
+    // 시작 화면에서 회전하는 이름을 클릭하면 폭발
     if (m_scene == SceneMode::Start)
     {
         if (!m_nameExploding && HitStartName(x, y))
@@ -172,7 +167,7 @@ void AssignmentGame::OnMouseDown(int x, int y)
         return;
     }
 
-    // 메뉴 화면에서는 Start 또는 Level-1 선택으로 Level-1 씬을 시작합니다.
+    // Start 또는 Level-1 선택으로 씬 시작
     if (m_scene == SceneMode::Menu)
     {
         const int entry = HitMenuEntry(x, y);
@@ -197,7 +192,7 @@ void AssignmentGame::OnMouseDown(int x, int y)
 
 void AssignmentGame::OnRightMouseDown(int, int)
 {
-    // Level-1에서만 우클릭으로 현재 락온 대상을 고정하거나 고정을 해제합니다.
+    // 우클릭으로 현재 락온 대상을 고정하거나 해제함
     if (m_scene != SceneMode::Level1)
     {
         return;
@@ -220,7 +215,7 @@ void AssignmentGame::OnRightMouseDown(int, int)
 
 void AssignmentGame::SetLevelCursorCapture(bool enabled)
 {
-    // Level-1에서는 마우스 조종을 위해 커서를 숨기고 창 안에 고정합니다.
+    // 커서를 숨기고 창 안에 고정
     if (enabled)
     {
         if (!m_hwnd)
@@ -259,7 +254,7 @@ void AssignmentGame::SetLevelCursorCapture(bool enabled)
         return;
     }
 
-    // 메뉴나 종료 상태에서는 커서 고정과 숨김을 해제합니다.
+    // 메뉴나 종료 상태에선 커서 고정과 숨김 해제
     ClipCursor(nullptr);
     if (m_cursorCaptured)
     {

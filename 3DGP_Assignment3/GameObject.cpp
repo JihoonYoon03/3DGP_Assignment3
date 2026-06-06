@@ -626,7 +626,7 @@ void AssignmentGame::BuildLevelScene()
 {
     // 지형 메시 하나를 월드 원점에 놓고, PPT 방식 그리드가 그대로 보이게 색을 유지합니다.
     DrawItem terrainItem{};
-    terrainItem.mesh = MeshKind::Terrain;
+    terrainItem.mesh = MeshType::Terrain;
     XMStoreFloat4x4(&terrainItem.world, XMMatrixIdentity());
     terrainItem.color = { 1.0f, 1.0f, 1.0f, 1.0f };
     m_drawItems.push_back(terrainItem);
@@ -674,7 +674,7 @@ void AssignmentGame::AddHelicopter()
             }
 
             DrawItem item{};
-            item.mesh = MeshKind::Apache;
+            item.mesh = MeshType::Apache;
             item.meshPartIndex = partIndex;
             XMStoreFloat4x4(&item.world, partAnimation * modelWorld);
             item.color = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -866,7 +866,7 @@ void AssignmentGame::AddBoxWithWorld(const XMMATRIX& world, const XMFLOAT4& colo
     }
 
     DrawItem item{};
-    item.mesh = MeshKind::Cube;
+    item.mesh = MeshType::Cube;
     XMStoreFloat4x4(&item.world, world);
     item.color = color;
     m_drawItems.push_back(item);
