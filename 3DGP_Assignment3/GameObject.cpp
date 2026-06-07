@@ -15,28 +15,27 @@ using namespace DirectX;
 
 namespace
 {
-    // 파이 값은 회전 애니메이션과 카메라 계산에 사용합니다.
     constexpr float Pi = 3.1415926535f;
-    // 메뉴 텍스트 크기는 렌더링과 클릭 판정이 같은 값을 쓰도록 한 곳에 둡니다.
+
     constexpr float MenuTextUnitSize = 0.066f;
     constexpr float MenuTextDepth = 0.085f;
     constexpr float MenuGlyphSpacing = 0.25f;
-    // 미사일은 발사 직후 잠시 직진한 뒤 천천히 선회하며 락온 대상을 추적합니다.
+
     constexpr float MissileHomingDelaySeconds = 0.55f;
     constexpr float MissileTurnRateRadians = 0.70f;
     constexpr float MissileTerrainCollisionRadius = 0.32f;
-    // 미사일 트레일은 고정 슬롯을 재사용해 매 발사마다 동적 할당이 생기지 않게 합니다.
+
     constexpr float MissileTrailSpawnIntervalSeconds = 0.035f;
     constexpr float MissileTrailDurationSeconds = 0.62f;
     constexpr float MissileTrailStartSize = 0.48f;
-    // 폭발 파티클 수와 지속 시간은 메인 화면과 미사일 폭발이 같은 감각을 갖도록 맞춥니다.
+
     constexpr int ExplosionParticleCount = 34;
     constexpr float ExplosionDurationSeconds = 0.85f;
 
-    // 5x7 도트 글리프 하나를 표현하는 타입입니다.
+    // 5x7 도트 글자 하나를 표현하는 타입
     using GlyphPattern = std::array<std::string_view, 7>;
 
-    // 기본 글리프는 알 수 없는 문자를 물음표 모양의 3D 블록으로 표시합니다.
+    // 아무것도 없을 때 기본 문자 패턴 '?'
     const GlyphPattern FallbackGlyph =
     {
         "11110",
@@ -48,7 +47,7 @@ namespace
         "00100"
     };
 
-    // ASCII와 과제 제목에 필요한 일부 한글 글리프를 5x7 도트로 정의합니다.
+    // 키는 나타낼 문자, 값은 GlyphPattern에 실제로 들어갈 데이터를 행 단위로 나열
     const std::unordered_map<wchar_t, GlyphPattern>& GlyphTable()
     {
         static const std::unordered_map<wchar_t, GlyphPattern> table =
@@ -105,7 +104,7 @@ namespace
         return table;
     }
 
-    // 글리프 테이블에서 문자를 찾고 없으면 기본 글리프를 반환합니다.
+    // 문자를 찾고 없으면 기본 문자 리턴
     const GlyphPattern& FindGlyph(wchar_t ch)
     {
         const auto& table = GlyphTable();
@@ -124,7 +123,6 @@ namespace
         return FallbackGlyph;
     }
 
-    // 글리프마다 실제 폭이 다를 수 있으므로 행 문자열의 최대 길이를 폭으로 사용합니다.
     float GlyphWidth(const GlyphPattern& glyph)
     {
         std::size_t width = 0;
@@ -136,7 +134,7 @@ namespace
         return static_cast<float>(width);
     }
 
-    // 3D 도트 글씨가 실제 월드에서 차지하는 가로 폭을 계산합니다.
+    // 글씨가 실제 월드에서 차지하는 가로 폭을 계산
     float TextWorldWidth(const std::wstring& text, float unitSize, float glyphSpacing = 0.25f)
     {
         if (text.empty())
@@ -153,7 +151,7 @@ namespace
         return std::max(0.0f, width - glyphSpacing) * unitSize;
     }
 
-    // 폭발 파티클이 x/y/z 축으로 서로 다른 방향에 흩어지도록 결정적인 방향 벡터를 만듭니다.
+    // 폭발 파티클 방향 결정
     XMFLOAT3 BurstDirection(float xBias, float yBias, int seed)
     {
         const float seedValue = static_cast<float>(seed);
@@ -166,19 +164,16 @@ namespace
         return result;
     }
 
-    // 두 3D 벡터를 더합니다.
     XMFLOAT3 AddVector(const XMFLOAT3& a, const XMFLOAT3& b)
     {
         return { a.x + b.x, a.y + b.y, a.z + b.z };
     }
 
-    // 3D 벡터에 스칼라를 곱합니다.
     XMFLOAT3 ScaleVector(const XMFLOAT3& v, float scale)
     {
         return { v.x * scale, v.y * scale, v.z * scale };
     }
 
-    // 두 점 사이의 제곱 거리를 계산해 충돌 검사에 사용합니다.
     float DistanceSquared(const XMFLOAT3& a, const XMFLOAT3& b)
     {
         const float dx = a.x - b.x;
@@ -187,7 +182,7 @@ namespace
         return dx * dx + dy * dy + dz * dz;
     }
 
-    // 선형 보간 후 정규화하여 급격하지 않은 방향 전환에 사용합니다.
+    // 선형 보간 후 정규화, 완만한 방향 전환에 사용
     XMFLOAT3 BlendDirection(const XMFLOAT3& from, const XMFLOAT3& to, float amount)
     {
         const float t = std::clamp(amount, 0.0f, 1.0f);
@@ -203,7 +198,6 @@ namespace
 
 void AssignmentGame::Update(float deltaSeconds)
 {
-    // 씬별로 필요한 시뮬레이션만 수행합니다.
     switch (m_scene)
     {
     case SceneMode::Start:
@@ -219,7 +213,6 @@ void AssignmentGame::Update(float deltaSeconds)
 
 void AssignmentGame::UpdateStart(float deltaSeconds)
 {
-    // 이름 폭발 애니메이션이 끝나면 메뉴로 전환합니다.
     if (m_nameExploding)
     {
         m_nameExplosionTime += deltaSeconds;
@@ -234,12 +227,12 @@ void AssignmentGame::UpdateStart(float deltaSeconds)
 
 void AssignmentGame::UpdateLevel(float deltaSeconds)
 {
-    // 이동은 수평 yaw 방향을 기준으로 하고, pitch는 마우스 조준에만 사용합니다.
+    // 이동은 yaw 방향 기준, pitch는 마우스 조준에만 사용.
     const XMFLOAT3 forward{ std::sinf(m_helicopterYaw), 0.0f, std::cosf(m_helicopterYaw) };
     const XMFLOAT3 right{ std::cosf(m_helicopterYaw), 0.0f, -std::sinf(m_helicopterYaw) };
     constexpr float moveSpeed = 18.0f * GP_WORLD_UNITS_PER_METER;
 
-    // WASD는 헬리콥터의 수평 이동을 담당합니다.
+    // 헬리콥터 수평 이동
     if (m_keyDown['W'])
     {
         m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(forward, moveSpeed * deltaSeconds));
@@ -257,7 +250,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         m_helicopterPosition = AddVector(m_helicopterPosition, ScaleVector(right, moveSpeed * deltaSeconds));
     }
 
-    // Space는 상승, 왼쪽 Ctrl은 하강입니다.
+    // Space 상승, Ctrl 하강
     if (m_keyDown[VK_SPACE])
     {
         m_helicopterPosition.y += moveSpeed * 0.55f * deltaSeconds;
@@ -267,19 +260,19 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         m_helicopterPosition.y -= moveSpeed * 0.55f * deltaSeconds;
     }
 
-    // 지형 바깥으로 너무 멀리 나가지 않도록 위치를 제한합니다.
+    // 지형 바깥으로 너무 멀리 나가지 않도록 위치 제한
     const float movementLimitX = std::max(5.0f, (m_terrainHalfWidth > 0.0f ? m_terrainHalfWidth : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
     const float movementLimitZ = std::max(5.0f, (m_terrainHalfLength > 0.0f ? m_terrainHalfLength : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
     m_helicopterPosition.x = std::clamp(m_helicopterPosition.x, -movementLimitX, movementLimitX);
     m_helicopterPosition.z = std::clamp(m_helicopterPosition.z, -movementLimitZ, movementLimitZ);
 
-    // PPT의 하이트맵 보간 방식처럼 현재 x/z 위치의 지형 높이를 구해 헬기가 지면 아래로 내려가지 않게 합니다.
+    // 하이트 맵에서 현재 x/z 위치의 지형 높이를 구해 헬기가 지면 아래로 내려가지 않게 조정
     const float terrainHeight = TerrainHeightAt(m_helicopterPosition.x, m_helicopterPosition.z);
     const float minimumAltitude = terrainHeight + GP_PLAYER_TERRAIN_CLEARANCE_METERS * GP_WORLD_UNITS_PER_METER;
     const float maximumAltitude = minimumAltitude + 85.0f * GP_WORLD_UNITS_PER_METER;
     m_helicopterPosition.y = std::clamp(m_helicopterPosition.y, minimumAltitude, maximumAltitude);
 
-    // 적 객체도 현재 위치의 하이트맵 높이에 맞춰 지면 위에 놓습니다.
+    // 적 객체도 하이트맵 높이에 맞춰 지면 위로 조정
     for (Target& target : m_targets)
     {
         if (target.active)
@@ -288,19 +281,18 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         }
     }
 
-    // 로터는 시간이 지날수록 빠르게 회전합니다.
     m_rotorAngle += 22.0f * deltaSeconds;
 
-    // 발사는 마우스 클릭에서 처리되며, 여기서는 쿨다운만 줄입니다.
+    // 발사는 마우스 클릭에서 처리, 여기선 쿨다운만 줄이기
     m_shotCooldown = std::max(0.0f, m_shotCooldown - deltaSeconds);
 
-    // 미사일을 이동시키고, 락온 미사일은 목표를 향해 제한된 속도로 선회합니다.
+    // 미사일 이동
     for (Bullet& bullet : m_bullets)
     {
         const float currentSpeed = std::sqrt(std::max(0.0001f, DistanceSquared(bullet.velocity, { 0.0f, 0.0f, 0.0f })));
         if (bullet.homing && IsTargetIndexValid(bullet.targetIndex))
         {
-            // 발사 직후에는 헬기 전방으로 그대로 나가게 하여 유도 시작 타이밍이 눈에 보이도록 합니다.
+            // 발사 직후에는 헬기 전방으로 사출
             if (bullet.homingDelaySeconds > 0.0f)
             {
                 bullet.homingDelaySeconds = std::max(0.0f, bullet.homingDelaySeconds - deltaSeconds);
@@ -328,7 +320,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         bullet.position = AddVector(bullet.position, ScaleVector(bullet.velocity, deltaSeconds));
         bullet.lifeSeconds -= deltaSeconds;
 
-        // 미사일이 빠르게 움직여도 지형을 통과하지 않도록 이번 프레임 이동 구간을 레이로 검사합니다.
+        // 이번 프레임의 이동 구간을 검사해서 지형에 충돌하도록 계산
         const float travelDistanceSquared = DistanceSquared(previousPosition, bullet.position);
         if (travelDistanceSquared > 0.000001f)
         {
@@ -348,7 +340,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
             }
         }
 
-        // 살아 있는 미사일은 뒤쪽에 회색 큐브 트레일을 일정 간격으로 남깁니다.
+        // 미사일 뒤쪽에 회색 큐브로 트레일 이펙트를 남김
         if (bullet.lifeSeconds > 0.0f)
         {
             bullet.trailSpawnAccumulator += deltaSeconds;
@@ -371,7 +363,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         return bullet.lifeSeconds <= 0.0f;
     });
 
-    // 탄환과 표적의 간단한 구형 충돌을 검사합니다.
+    // 탄환/표적 충돌 검사
     for (Bullet& bullet : m_bullets)
     {
         if (bullet.lifeSeconds <= 0.0f)
@@ -396,7 +388,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         return bullet.lifeSeconds <= 0.0f;
     });
 
-    // 폭발 파티클의 수명을 갱신하고 끝난 효과를 제거합니다.
+    // 폭발 파티클 수명 갱신, 끝났으면 제거
     for (Explosion& explosion : m_explosions)
     {
         explosion.elapsedSeconds += deltaSeconds;
@@ -406,7 +398,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         return explosion.elapsedSeconds >= explosion.durationSeconds;
     });
 
-    // 미사일 트레일 입자는 고정 배열 안에서 수명만 갱신하고 끝난 슬롯은 재사용합니다.
+    // 미사일 트레일 이펙트는 재사용
     for (MissileTrailParticle& particle : m_missileTrails)
     {
         if (!particle.active)
@@ -424,13 +416,13 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
         particle.position = AddVector(particle.position, ScaleVector(particle.velocity, deltaSeconds));
     }
 
-    // 현재 총구 광선이 맞는 지형 또는 오브젝트 위치를 갱신합니다.
+    // 총구 광선이 맞는 지형/오브젝트 위치 갱신
     UpdateAimRay();
 }
 
 void AssignmentGame::UpdateAimRay()
 {
-    // 헬리콥터 총구에서 현재 yaw/pitch 방향으로 광선을 쏩니다.
+    // 헬리콥터 총구에서 광선 발사
     const float maxAimDistance = std::max({ GP_TERRAIN_HALF_SIZE_METERS, m_terrainHalfWidth, m_terrainHalfLength }) * 2.0f;
     m_aimDirection = ForwardDirection();
     const Collision::Ray ray{ MuzzlePosition(), m_aimDirection };
@@ -441,7 +433,7 @@ void AssignmentGame::UpdateAimRay()
     int lockCandidateIndex = -1;
     float bestLockScore = -1.0f;
 
-    // 살아 있는 표적을 검사하고 가장 가까운 충돌점을 선택합니다.
+    // 가장 가까운 충돌점 선택
     for (std::size_t targetIndex = 0; targetIndex < m_targets.size(); ++targetIndex)
     {
         const Target& target = m_targets[targetIndex];
@@ -478,7 +470,7 @@ void AssignmentGame::UpdateAimRay()
         }
     }
 
-    // 직접 맞춘 표적을 최우선 후보로 두고, 락온 고정 중이면 기존 대상을 유지합니다.
+    // 락온 고정 X -> 직접 맞춘 표적 최우선, 락온 고정 중이면 기존 대상 유지
     const int automaticLockIndex = (hitTargetIndex >= 0) ? hitTargetIndex : lockCandidateIndex;
     if (m_lockPinned)
     {
@@ -493,14 +485,12 @@ void AssignmentGame::UpdateAimRay()
         m_lockedTargetIndex = automaticLockIndex;
     }
 
-    // 지형은 하이트맵 높이를 따라 레이마칭하여 실제 표면과의 교차점을 찾습니다.
     Collision::HitResult terrainHit{};
     if (RaycastTerrain(ray, bestHit.distance, terrainHit))
     {
         bestHit = terrainHit;
     }
 
-    // 아무것도 맞지 않으면 먼 곳에 표시하여 탄환 방향을 계속 보여 줍니다.
     if (!bestHit.hit)
     {
         bestHit.hit = true;
@@ -514,7 +504,6 @@ void AssignmentGame::UpdateAimRay()
 
 void AssignmentGame::FireBulletAtAim()
 {
-    // 빠른 연사를 막기 위해 간단한 쿨다운을 둡니다.
     if (m_shotCooldown > 0.0f)
     {
         return;
@@ -526,7 +515,6 @@ void AssignmentGame::FireBulletAtAim()
 
     Bullet bullet{};
     bullet.position = muzzle;
-    // 락온 상태여도 미사일은 먼저 헬기 전방으로 발사되고, 이후 자체 회전으로 목표를 추적합니다.
     bullet.velocity = Collision::Scale(launchDirection, 55.0f * GP_WORLD_UNITS_PER_METER);
     bullet.lifeSeconds = 10.0f;
     bullet.homing = IsTargetIndexValid(m_lockedTargetIndex);
@@ -539,7 +527,6 @@ void AssignmentGame::FireBulletAtAim()
 
 void AssignmentGame::SpawnMissileTrail(const XMFLOAT3& position, const XMFLOAT3& missileDirection)
 {
-    // 순환 인덱스로 오래된 입자를 덮어써 트레일 생성 비용을 일정하게 유지합니다.
     MissileTrailParticle& particle = m_missileTrails[m_nextMissileTrailIndex];
     m_nextMissileTrailIndex = (m_nextMissileTrailIndex + 1) % m_missileTrails.size();
 
@@ -558,7 +545,6 @@ void AssignmentGame::SpawnMissileTrail(const XMFLOAT3& position, const XMFLOAT3&
 
 void AssignmentGame::SpawnExplosion(const XMFLOAT3& position, const XMFLOAT4& color, float radius)
 {
-    // 폭발 요청은 수명과 크기만 저장하고 실제 파티클 배치는 렌더 단계에서 결정합니다.
     Explosion explosion{};
     explosion.position = position;
     explosion.color = color;
@@ -570,7 +556,6 @@ void AssignmentGame::SpawnExplosion(const XMFLOAT3& position, const XMFLOAT4& co
 
 void AssignmentGame::BuildDrawItems()
 {
-    // 프레임마다 현재 씬에 필요한 도형만 새로 채웁니다.
     m_drawItems.clear();
     m_drawItems.reserve(1024);
 
@@ -590,10 +575,8 @@ void AssignmentGame::BuildDrawItems()
 
 void AssignmentGame::BuildStartScene()
 {
-    // 시작 화면 제목은 판독성을 위해 ASCII 3D 블록 글씨로 렌더링합니다.
     AddText3D(L"3D GAME PROGRAMMING 1", { 0.0f, 1.35f, 0.0f }, 0.090f, 0.13f, { 0.65f, 0.88f, 1.0f, 1.0f });
 
-    // 플레이 버튼은 3D 글씨이며, 클릭하면 메뉴 화면으로 전환됩니다.
     const float nameYaw = m_nameExploding ? m_nameExplosionYaw : m_totalTime * 1.7f;
     if (m_nameExploding)
     {
@@ -604,13 +587,11 @@ void AssignmentGame::BuildStartScene()
         AddText3D(L"PLAY", { 0.0f, -0.55f, 0.0f }, 0.20f, 0.20f, { 1.0f, 0.82f, 0.20f, 1.0f }, nameYaw);
     }
 
-    // 마우스 선택 대상을 알려주는 보조 문구도 3D로 배치합니다.
     AddText3D(L"CLICK PLAY", { 0.0f, -2.1f, 0.0f }, 0.10f, 0.10f, { 0.78f, 0.80f, 0.86f, 1.0f });
 }
 
 void AssignmentGame::BuildMenuScene()
 {
-    // 메뉴 제목과 항목은 전부 3D 큐브 글씨로 렌더링합니다.
     AddText3D(L"MENU", { 0.0f, 2.55f, 0.0f }, 0.13f, 0.13f, { 0.85f, 0.95f, 1.0f, 1.0f });
 
     for (const MenuEntry& entry : m_menuEntries)
@@ -624,14 +605,13 @@ void AssignmentGame::BuildMenuScene()
 
 void AssignmentGame::BuildLevelScene()
 {
-    // 지형 메시 하나를 월드 원점에 놓고, PPT 방식 그리드가 그대로 보이게 색을 유지합니다.
     DrawItem terrainItem{};
     terrainItem.mesh = MeshType::Terrain;
     XMStoreFloat4x4(&terrainItem.world, XMMatrixIdentity());
     terrainItem.color = { 1.0f, 1.0f, 1.0f, 1.0f };
     m_drawItems.push_back(terrainItem);
 
-    // 헬리콥터는 Apache 모델을 우선 사용하고, 표적과 탄환은 임시 박스로 렌더링합니다.
+    // 헬리콥터는 Apache 모델을 우선 사용, 표적과 탄환은 박스
     AddHelicopter();
     AddTargets();
     AddMissileTrails();
@@ -643,7 +623,6 @@ void AssignmentGame::BuildLevelScene()
 
 void AssignmentGame::AddHelicopter()
 {
-    // Apache 모델을 정상적으로 읽었다면 실제 모델 메시를 헬리콥터로 렌더링합니다.
     if (m_apacheModelLoaded)
     {
         const XMMATRIX modelWorld = ApacheModelWorldMatrix();
@@ -658,7 +637,6 @@ void AssignmentGame::AddHelicopter()
             XMMATRIX partAnimation = XMMatrixIdentity();
             if (part.mainRotor)
             {
-                // 메인 로터는 파트 중심을 피벗으로 두고 모델 로컬 y축 주위에서 계속 회전합니다.
                 partAnimation =
                     XMMatrixTranslation(-part.center.x, -part.center.y, -part.center.z) *
                     XMMatrixRotationY(m_rotorAngle * 1.8f) *
@@ -666,7 +644,6 @@ void AssignmentGame::AddHelicopter()
             }
             else if (part.tailRotor)
             {
-                // 꼬리 로터는 꼬리 부분의 얇은 파트를 모델 로컬 x축 주위로 빠르게 회전시킵니다.
                 partAnimation =
                     XMMatrixTranslation(-part.center.x, -part.center.y, -part.center.z) *
                     XMMatrixRotationX(m_rotorAngle * 3.2f) *
@@ -683,30 +660,26 @@ void AssignmentGame::AddHelicopter()
         return;
     }
 
-    // 부모 행렬은 헬리콥터 전체를 현재 위치와 방향으로 이동시킵니다.
     const XMMATRIX parent = XMMatrixRotationRollPitchYaw(-m_helicopterPitch * 0.45f, m_helicopterYaw, 0.0f) * XMMatrixTranslation(m_helicopterPosition.x, m_helicopterPosition.y, m_helicopterPosition.z);
 
-    // 헬리콥터 본체는 현재 사각형 박스지만, 나중에 모델 메시로 교체하기 쉽도록 한 함수에 모았습니다.
     auto addPart = [this, parent](const XMFLOAT3& localPosition, const XMFLOAT3& size, const XMFLOAT4& color, const XMMATRIX& localRotation = XMMatrixIdentity())
     {
         const XMMATRIX world = XMMatrixScaling(size.x, size.y, size.z) * localRotation * XMMatrixTranslation(localPosition.x, localPosition.y, localPosition.z) * parent;
         AddBoxWithWorld(world, color);
     };
 
+    // apache 로드 실패 시 사용할 모델 데이터
     addPart({ 0.0f, 0.0f, 0.0f }, { 1.15f, 0.45f, 1.85f }, { 0.12f, 0.38f, 0.92f, 1.0f });
     addPart({ 0.0f, 0.08f, 0.65f }, { 0.82f, 0.38f, 0.65f }, { 0.45f, 0.88f, 1.0f, 1.0f });
     addPart({ 0.0f, 0.03f, -1.55f }, { 0.24f, 0.24f, 1.75f }, { 0.10f, 0.22f, 0.58f, 1.0f });
     addPart({ 0.0f, 0.02f, -2.55f }, { 0.48f, 0.48f, 0.12f }, { 0.16f, 0.28f, 0.70f, 1.0f });
 
-    // 메인 로터와 꼬리 로터는 회전하는 얇은 박스로 표현합니다.
     addPart({ 0.0f, 0.48f, 0.0f }, { 3.25f, 0.05f, 0.14f }, { 0.95f, 0.95f, 0.98f, 1.0f }, XMMatrixRotationY(m_rotorAngle));
     addPart({ 0.0f, 0.49f, 0.0f }, { 0.14f, 0.05f, 3.25f }, { 0.95f, 0.95f, 0.98f, 1.0f }, XMMatrixRotationY(m_rotorAngle));
-    // 꼬리 로터는 꼬리축 방향이 아니라 측면을 향하도록 90도 돌린 YZ 평면에서 회전시킵니다.
     addPart({ 0.34f, 0.02f, -2.72f }, { 0.08f, 0.85f, 0.10f }, { 0.95f, 0.92f, 0.75f, 1.0f }, XMMatrixRotationX(m_rotorAngle * 1.7f));
     addPart({ 0.34f, 0.02f, -2.72f }, { 0.08f, 0.10f, 0.85f }, { 0.95f, 0.92f, 0.75f, 1.0f }, XMMatrixRotationX(m_rotorAngle * 1.7f));
     addPart({ 0.0f, -0.02f, 1.35f }, { 0.18f, 0.18f, 0.50f }, { 0.08f, 0.08f, 0.10f, 1.0f });
 
-    // 착륙 스키드는 박스 두 개와 지지대 네 개로 구성합니다.
     addPart({ -0.48f, -0.48f, 0.1f }, { 0.10f, 0.08f, 1.65f }, { 0.08f, 0.10f, 0.18f, 1.0f });
     addPart({ 0.48f, -0.48f, 0.1f }, { 0.10f, 0.08f, 1.65f }, { 0.08f, 0.10f, 0.18f, 1.0f });
     addPart({ -0.35f, -0.27f, 0.55f }, { 0.08f, 0.42f, 0.08f }, { 0.08f, 0.10f, 0.18f, 1.0f });
@@ -717,7 +690,6 @@ void AssignmentGame::AddHelicopter()
 
 XMMATRIX AssignmentGame::ApacheModelWorldMatrix() const
 {
-    // 실제 모델 파트들이 공유하는 기체 배치 행렬입니다.
     return
         XMMatrixScaling(GP_APACHE_MODEL_SCALE, GP_APACHE_MODEL_SCALE, GP_APACHE_MODEL_SCALE) *
         XMMatrixRotationRollPitchYaw(-m_helicopterPitch * 0.45f, m_helicopterYaw, 0.0f) *
@@ -726,7 +698,6 @@ XMMATRIX AssignmentGame::ApacheModelWorldMatrix() const
 
 void AssignmentGame::AddTargets()
 {
-    // 살아 있는 표적만 붉은 3D 박스로 그립니다.
     for (const Target& target : m_targets)
     {
         if (!target.active)
@@ -740,7 +711,6 @@ void AssignmentGame::AddTargets()
 
 void AssignmentGame::AddMissileTrails()
 {
-    // 트레일 입자는 시간이 지날수록 작아지는 회색 큐브로 그려 연기 꼬리처럼 보이게 합니다.
     for (const MissileTrailParticle& particle : m_missileTrails)
     {
         if (!particle.active)
@@ -762,7 +732,6 @@ void AssignmentGame::AddMissileTrails()
 
 void AssignmentGame::AddBullets()
 {
-    // 탄환은 작고 밝은 큐브로 표현합니다.
     for (const Bullet& bullet : m_bullets)
     {
         const XMFLOAT3 direction = Collision::Normalize(bullet.velocity);
@@ -776,7 +745,6 @@ void AssignmentGame::AddBullets()
 
 void AssignmentGame::AddExplosions()
 {
-    // 폭발은 중심에서 바깥으로 퍼지는 큐브 파티클로 표현합니다.
     for (const Explosion& explosion : m_explosions)
     {
         const float t = std::clamp(explosion.elapsedSeconds / std::max(0.0001f, explosion.durationSeconds), 0.0f, 1.0f);
@@ -809,13 +777,11 @@ void AssignmentGame::AddExplosions()
 
 void AssignmentGame::AddCrosshair()
 {
-    // 조준 광선 계산 결과가 없으면 크로스헤어를 표시하지 않습니다.
     if (!m_crosshairValid)
     {
         return;
     }
 
-    // 충돌 위치에는 3D 십자 표시를 배치하여 탄환이 날아갈 지점을 보여 줍니다.
     const XMFLOAT3 p{ m_crosshairPosition.x, m_crosshairPosition.y + 0.05f, m_crosshairPosition.z };
     const float markerSize = ScreenConstantScaleAt(p, 0.035f);
     const float markerThickness = std::max(0.10f, markerSize * 0.08f);
@@ -826,7 +792,6 @@ void AssignmentGame::AddCrosshair()
 
 void AssignmentGame::AddLockOnIndicator()
 {
-    // 락온 대상에는 거리와 관계없이 잘 보이는 노란 3D 브래킷을 표시합니다.
     if (!IsTargetIndexValid(m_lockedTargetIndex))
     {
         return;
@@ -852,14 +817,12 @@ void AssignmentGame::AddLockOnIndicator()
 
 void AssignmentGame::AddBox(const XMFLOAT3& center, const XMFLOAT3& size, const XMFLOAT4& color, float yaw, float pitch, float roll)
 {
-    // 크기, 회전, 이동 순서로 월드 행렬을 만들어 큐브 메시를 박스로 바꿉니다.
     const XMMATRIX world = XMMatrixScaling(size.x, size.y, size.z) * XMMatrixRotationRollPitchYaw(pitch, yaw, roll) * XMMatrixTranslation(center.x, center.y, center.z);
     AddBoxWithWorld(world, color);
 }
 
 void AssignmentGame::AddBoxWithWorld(const XMMATRIX& world, const XMFLOAT4& color)
 {
-    // 실제 그리기는 렌더 단계에서 수행되므로 여기서는 DrawItem만 저장합니다.
     if (m_drawItems.size() >= MaxDrawItems)
     {
         return;
@@ -874,7 +837,6 @@ void AssignmentGame::AddBoxWithWorld(const XMMATRIX& world, const XMFLOAT4& colo
 
 void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, bool centered, float glyphSpacing)
 {
-    // 문자열 전체 폭을 먼저 계산해 중앙 정렬을 구현합니다.
     float totalUnits = 0.0f;
     for (wchar_t ch : text)
     {
@@ -891,7 +853,6 @@ void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin,
 
     for (wchar_t ch : text)
     {
-        // 공백은 빈 폭만 차지합니다.
         if (ch == L' ')
         {
             cursor += 2.2f;
@@ -922,7 +883,7 @@ void AssignmentGame::AddText3D(const std::wstring& text, const XMFLOAT3& origin,
 
 void AssignmentGame::AddExplodingText3D(const std::wstring& text, const XMFLOAT3& origin, float unitSize, float depth, const XMFLOAT4& color, float yaw, float explosionTime)
 {
-    // 폭발 애니메이션은 각 글자 블록이 중심에서 바깥으로 멀어지는 방식입니다.
+    // 폭발 애니메이션은 각 글자 블록이 중심에서 바깥으로 멀어지게
     float totalUnits = 0.0f;
     for (wchar_t ch : text)
     {
@@ -977,7 +938,6 @@ void AssignmentGame::AddExplodingText3D(const std::wstring& text, const XMFLOAT3
 
 bool AssignmentGame::HitStartName(int x, int y) const
 {
-    // 플레이 글씨가 위치한 화면 중앙 하단 영역을 선택 대상으로 사용합니다.
     const float nx = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
     const float ny = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
     return nx >= 0.38f && nx <= 0.62f && ny >= 0.45f && ny <= 0.63f;
@@ -985,7 +945,6 @@ bool AssignmentGame::HitStartName(int x, int y) const
 
 int AssignmentGame::HitMenuEntry(int x, int y) const
 {
-    // 메뉴 항목의 실제 3D 글자 영역을 화면 좌표로 투영해 클릭 영역과 표시 위치를 맞춥니다.
     const float mouseX = static_cast<float>(x) / static_cast<float>(std::max(1u, m_width));
     const float mouseY = static_cast<float>(y) / static_cast<float>(std::max(1u, m_height));
     const XMMATRIX view = XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -8.5f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
@@ -1024,7 +983,6 @@ int AssignmentGame::HitMenuEntry(int x, int y) const
 
 void AssignmentGame::ResetLevel()
 {
-    // Level-1을 처음부터 다시 시작할 때 헬리콥터와 표적 상태를 초기화합니다.
     const auto placeOnTerrain = [this](float x, float z, float clearanceMeters)
     {
         return XMFLOAT3
@@ -1057,7 +1015,6 @@ void AssignmentGame::ResetLevel()
     m_targets.reserve(static_cast<std::size_t>(std::max(0, GP_LEVEL_TARGET_COUNT)));
     for (int targetIndex = 0; targetIndex < GP_LEVEL_TARGET_COUNT; ++targetIndex)
     {
-        // 적은 시작 위치보다 앞쪽 지형에 나선형으로 분산해 서로 과하게 겹치지 않게 합니다.
         const float normalizedIndex = (GP_LEVEL_TARGET_COUNT <= 1) ? 0.0f : static_cast<float>(targetIndex) / static_cast<float>(GP_LEVEL_TARGET_COUNT - 1);
         const float angle = static_cast<float>(targetIndex) * 2.399963f;
         const float spread = 0.28f + normalizedIndex * 0.60f;
@@ -1070,7 +1027,6 @@ void AssignmentGame::ResetLevel()
 
 bool AssignmentGame::IsTargetIndexValid(int targetIndex) const
 {
-    // 락온 대상 인덱스가 범위 안이고 아직 살아 있는지 확인합니다.
     if (targetIndex < 0 || targetIndex >= static_cast<int>(m_targets.size()))
     {
         return false;
@@ -1081,7 +1037,6 @@ bool AssignmentGame::IsTargetIndexValid(int targetIndex) const
 
 float AssignmentGame::ScreenConstantScaleAt(const XMFLOAT3& position, float scalePerMeter) const
 {
-    // 카메라에서 멀어질수록 월드 크기를 키워 화면상 크기가 크게 줄지 않게 보정합니다.
     const XMFLOAT3 cameraPosition = LevelCameraPosition();
     const float distance = std::sqrt(std::max(0.0001f, DistanceSquared(position, cameraPosition)));
     return std::clamp(distance * scalePerMeter, 0.35f, 8.0f);
@@ -1089,7 +1044,6 @@ float AssignmentGame::ScreenConstantScaleAt(const XMFLOAT3& position, float scal
 
 float AssignmentGame::TerrainHeightAt(float worldX, float worldZ) const
 {
-    // 하이트맵이 없으면 기존 평면 지형처럼 높이 0을 반환합니다.
     if (m_terrainHeights.empty() || m_terrainWidth < 2 || m_terrainLength < 2)
     {
         return 0.0f;
@@ -1131,7 +1085,6 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
         return false;
     }
 
-    // 하이트맵이 없으면 기존 y=0 평면 충돌을 그대로 사용합니다.
     if (m_terrainHeights.empty())
     {
         hit = Collision::RaycastPlaneY(ray, heightOffset, maxDistance);
@@ -1159,7 +1112,6 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
             return false;
         }
 
-        // heightOffset은 미사일 같은 부피 있는 물체가 표면에 닿는 높이를 보정합니다.
         delta = point.y - (TerrainHeightAt(point.x, point.z) + heightOffset);
         return true;
     };
@@ -1240,7 +1192,6 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
 
 XMFLOAT3 AssignmentGame::LevelCameraPosition() const
 {
-    // Camera.cpp의 3인칭 카메라 위치 계산과 같은 기준을 사용합니다.
     const XMFLOAT3 flatForward{ std::sinf(m_helicopterYaw), 0.0f, std::cosf(m_helicopterYaw) };
     return
     {
@@ -1252,14 +1203,12 @@ XMFLOAT3 AssignmentGame::LevelCameraPosition() const
 
 XMFLOAT3 AssignmentGame::ForwardDirection() const
 {
-    // yaw는 수평 방향, pitch는 위아래 조준 각도입니다.
     const float cosPitch = std::cos(m_helicopterPitch);
     return Collision::Normalize({ std::sin(m_helicopterYaw) * cosPitch, std::sin(m_helicopterPitch), std::cos(m_helicopterYaw) * cosPitch });
 }
 
 XMFLOAT3 AssignmentGame::MuzzlePosition() const
 {
-    // 실제 Apache 모델은 길이가 더 길기 때문에 모델 로딩 여부에 따라 총구 오프셋을 다르게 둡니다.
     const XMFLOAT3 forward = ForwardDirection();
     const float muzzleOffset = m_apacheModelLoaded ? GP_APACHE_MUZZLE_OFFSET_METERS * GP_WORLD_UNITS_PER_METER : 1.55f;
     return

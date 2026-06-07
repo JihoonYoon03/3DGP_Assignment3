@@ -5,24 +5,20 @@
 #include "3DGP_Assignment3.h"
 #include "GameFramework.h"
 
-// 마우스 좌표 추출 매크로를 사용합니다.
 #include <windowsx.h>
 
-// 표준 시간/메모리/예외 처리는 게임 루프와 오류 보고에 사용합니다.
 #include <chrono>
 #include <memory>
 #include <stdexcept>
 
 #define MAX_LOADSTRING 100
 
-// 전역 변수:
 HINSTANCE hInst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
 HWND g_hWnd = nullptr;
 std::unique_ptr<AssignmentGame> g_game;
 
-// 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -36,18 +32,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_MY3DGPASSIGNMENT3, szWindowClass, MAX_LOADSTRING);
     MyRegisterClass(hInstance);
 
-    // 애플리케이션 초기화를 수행합니다:
     if (!InitInstance (hInstance, nCmdShow))
     {
         return FALSE;
     }
 
-    // D3D12 렌더러와 게임 상태를 생성합니다.
     try
     {
         RECT clientRect{};
@@ -80,7 +73,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
     }
 
-    // 창이 닫힌 뒤 GPU 리소스를 정리합니다.
     g_game.reset();
 
     return (int) msg.wParam;
@@ -126,9 +118,8 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 //
 BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
-   hInst = hInstance; // 인스턴스 핸들을 전역 변수에 저장합니다.
+   hInst = hInstance;
 
-   // 과제 실행 화면은 16:9 기본 해상도로 생성합니다.
    RECT windowRect{ 0, 0, 1280, 720 };
    AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
    HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
@@ -161,38 +152,33 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     switch (message)
     {
     case WM_COMMAND:
-        // 리소스 메뉴를 사용하지 않지만 기본 명령 처리는 남겨 둡니다.
+        
         return DefWindowProc(hWnd, message, wParam, lParam);
     case WM_SIZE:
-        // 창 크기 변경을 D3D12 백 버퍼 재생성으로 전달합니다.
         if (g_game)
         {
             g_game->OnResize(LOWORD(lParam), HIWORD(lParam));
         }
         break;
     case WM_KEYDOWN:
-        // 반복 입력도 이동에는 유효하므로 게임 객체로 전달합니다.
         if (g_game)
         {
             g_game->OnKeyDown(wParam);
         }
         break;
     case WM_KEYUP:
-        // 키를 떼면 이동 상태를 해제합니다.
         if (g_game)
         {
             g_game->OnKeyUp(wParam);
         }
         break;
     case WM_MOUSEMOVE:
-        // 마우스 위치는 메뉴 hover와 선택에 사용합니다.
         if (g_game)
         {
             g_game->OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         }
         break;
     case WM_LBUTTONDOWN:
-        // 왼쪽 클릭은 시작 이름 또는 메뉴 항목 선택입니다.
         SetCapture(hWnd);
         if (g_game)
         {
@@ -200,11 +186,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         break;
     case WM_LBUTTONUP:
-        // 클릭 드래그가 끝나면 마우스 캡처를 해제합니다.
         ReleaseCapture();
         break;
     case WM_RBUTTONDOWN:
-        // 오른쪽 클릭은 Level-1에서 현재 자동 락온 대상을 고정하거나 해제합니다.
         if (g_game)
         {
             g_game->OnRightMouseDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
@@ -214,7 +198,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             PAINTSTRUCT ps;
             BeginPaint(hWnd, &ps);
-            // 실제 화면 출력은 D3D12 렌더 루프에서 수행합니다.
             EndPaint(hWnd, &ps);
         }
         break;
@@ -227,7 +210,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     return 0;
 }
 
-// 정보 대화 상자의 메시지 처리기입니다.
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);

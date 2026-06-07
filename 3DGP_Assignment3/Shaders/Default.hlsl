@@ -1,4 +1,4 @@
-// 객체별 월드 행렬, 색상, 카메라 위치, 조명 정보를 받는 상수 버퍼입니다.
+﻿// 객체별 월드 행렬, 색상, 카메라 위치, 조명 정보
 cbuffer ObjectConstants : register(b0)
 {
     float4x4 gWorld;
@@ -13,7 +13,6 @@ cbuffer ObjectConstants : register(b0)
     float4 gLightingOptions;
 };
 
-// CPU 정점 버퍼에서 전달되는 위치, 색상, 노멀 데이터입니다.
 struct VertexIn
 {
     float3 position : POSITION;
@@ -21,7 +20,6 @@ struct VertexIn
     float3 normal : NORMAL;
 };
 
-// 래스터라이저와 픽셀 셰이더로 넘길 보간 데이터입니다.
 struct VertexOut
 {
     float4 position : SV_POSITION;
@@ -30,7 +28,7 @@ struct VertexOut
     float3 normal : NORMAL;
 };
 
-// 정점을 클립 공간으로 변환하고 조명 계산용 월드 좌표와 노멀을 넘깁니다.
+// 정점 변환, 조명 계산 좌표와 노멀 넘기기
 VertexOut VSMain(VertexIn input)
 {
     VertexOut output;
@@ -42,19 +40,19 @@ VertexOut VSMain(VertexIn input)
     return output;
 }
 
-// 방향성 광원 하나로 앰비언트, 디퓨즈, 스페큘러 조명을 계산합니다.
+// 앰비언트, 디퓨즈, 스페큘러 계산. 방향광 하나 사용
 float4 PSMain(VertexOut input) : SV_TARGET
 {
-    const float3 normal = normalize(input.normal);
-    const float3 lightToSurface = normalize(gLightDirection.xyz);
-    const float3 surfaceToLight = -lightToSurface;
-    const float diffuseFactor = saturate(dot(normal, surfaceToLight));
+    float3 normal = normalize(input.normal);
+    float3 lightToSurface = normalize(gLightDirection.xyz);
+    float3 surfaceToLight = -lightToSurface;
+    float diffuseFactor = saturate(dot(normal, surfaceToLight));
 
-    const float3 viewDirection = normalize(gCameraPosition.xyz - input.worldPosition);
-    const float3 reflectDirection = reflect(lightToSurface, normal);
-    const float specularFactor = pow(saturate(dot(viewDirection, reflectDirection)), gLightingOptions.x);
+    float3 viewDirection = normalize(gCameraPosition.xyz - input.worldPosition);
+    float3 reflectDirection = reflect(lightToSurface, normal);
+    float specularFactor = pow(saturate(dot(viewDirection, reflectDirection)), gLightingOptions.x);
 
-    const float3 litColor =
+    float3 litColor =
         gAmbientColor.rgb +
         gDiffuseColor.rgb * diffuseFactor +
         gSpecularColor.rgb * specularFactor;

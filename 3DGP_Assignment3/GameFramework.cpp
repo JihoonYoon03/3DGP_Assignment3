@@ -5,23 +5,19 @@
 
 AssignmentGame::~AssignmentGame()
 {
-    // 게임 종료 시 숨김/고정된 커서를 반드시 원래 상태로 돌립니다.
     SetLevelCursorCapture(false);
 
-    // GPU가 아직 백 버퍼나 상수 버퍼를 읽는 중일 수 있으므로 종료 전에 기다립니다.
     if (m_device && m_commandQueue && m_fence)
     {
         FlushCommandQueue();
     }
 
-    // 매핑된 업로드 버퍼는 프로세스 종료 전 명시적으로 해제합니다.
     if (m_constantBuffer && m_mappedConstantBuffer)
     {
         m_constantBuffer->Unmap(0, nullptr);
         m_mappedConstantBuffer = nullptr;
     }
 
-    // Fence 이벤트 핸들은 Win32 리소스이므로 직접 닫습니다.
     if (m_fenceEvent)
     {
         CloseHandle(m_fenceEvent);

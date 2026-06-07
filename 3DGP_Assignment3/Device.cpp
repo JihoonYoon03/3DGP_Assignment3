@@ -36,7 +36,7 @@ void AssignmentGame::CreateDeviceResources()
         }
     }
 
-    // 하드웨어 장치 생성에 실패하면 WARP 장치를 생성
+    // 장치 생성에 실패하면 WARP 장치를 생성
     if (!m_device)
     {
         ComPtr<IDXGIAdapter> warpAdapter;
@@ -113,7 +113,7 @@ void AssignmentGame::CreateWindowSizeDependentResources()
     ThrowIfFailed(m_swapChain->ResizeBuffers(FrameCount, m_width, m_height, DXGI_FORMAT_R8G8B8A8_UNORM, 0));
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
 
-    // 백 버퍼마다 렌더 타깃 뷰를 생성
+    // 후면 버퍼마다 RTV를 생성
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (UINT bufferIndex = 0; bufferIndex < FrameCount; ++bufferIndex)
     {
