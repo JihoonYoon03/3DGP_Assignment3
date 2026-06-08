@@ -1,4 +1,4 @@
-#include "Mesh.h"
+﻿#include "Mesh.h"
 
 #include <algorithm>
 #include <array>
@@ -16,10 +16,8 @@ using namespace DirectX;
 
 namespace
 {
-    // Apache.txt를 찾을 때 사용할 파일 이름입니다.
     constexpr const wchar_t* ApacheModelFileName = L"Apache.txt";
 
-    // DirectXMath 행렬을 저장형으로 초기화합니다.
     XMFLOAT4X4 IdentityMatrix()
     {
         XMFLOAT4X4 matrix{};
@@ -27,7 +25,6 @@ namespace
         return matrix;
     }
 
-    // 문자열 왼쪽의 공백과 탭을 제거한 view를 반환합니다.
     std::string_view TrimLeft(std::string_view text)
     {
         while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
@@ -37,7 +34,6 @@ namespace
         return text;
     }
 
-    // 행 앞쪽 공백 수로 계층 프레임의 들여쓰기 깊이를 계산합니다.
     int CountIndent(std::string_view text)
     {
         int indent = 0;
@@ -52,7 +48,6 @@ namespace
         return indent;
     }
 
-    // 지정 태그로 시작하는 행이면 태그 뒤 payload를 반환합니다.
     std::optional<std::string_view> PayloadAfterTag(std::string_view line, std::string_view tag)
     {
         const std::string_view trimmed = TrimLeft(line);
@@ -63,7 +58,7 @@ namespace
         return TrimLeft(trimmed.substr(tag.size()));
     }
 
-    // <Frame>: 행에서 프레임 이름만 분리합니다.
+    // <Frame> 행에서 프레임 이름만 분리
     std::string ParseFrameName(std::string_view payload)
     {
         std::istringstream stream{ std::string(payload) };
@@ -73,7 +68,6 @@ namespace
         return frameName;
     }
 
-    // Apache 파일의 16개 float 행렬 값을 읽습니다.
     std::optional<XMFLOAT4X4> ParseMatrix(std::string_view payload)
     {
         std::istringstream stream{ std::string(payload) };
@@ -97,7 +91,7 @@ namespace
         return matrix;
     }
 
-    // 색상 값은 현재 셰이더에서 바로 쓰이도록 0~1 범위로 보정합니다.
+    // 색상 값은 0 ~ 1 범위로 보정
     XMFLOAT4 NormalizeMaterialColor(const XMFLOAT4& color)
     {
         XMFLOAT4 normalized
@@ -108,7 +102,7 @@ namespace
             1.0f
         };
 
-        // 조명 셰이더에서도 완전 검정은 형태가 묻히므로 최소 밝기만 부여합니다.
+        // 값이 너무 작으면 최소 밝기로 설정
         if (normalized.x + normalized.y + normalized.z < 0.03f)
         {
             normalized = { 0.04f, 0.04f, 0.04f, 1.0f };
@@ -116,7 +110,6 @@ namespace
         return normalized;
     }
 
-    // 실행 파일 위치를 기준으로 모델 파일을 찾기 위한 디렉터리를 얻습니다.
     std::filesystem::path ExecutableDirectory()
     {
         std::array<wchar_t, MAX_PATH> modulePath{};
@@ -128,7 +121,6 @@ namespace
         return std::filesystem::path(modulePath.data()).parent_path();
     }
 
-    // Visual Studio 실행, 솔루션 루트 실행, 빌드 출력 폴더 실행을 모두 고려해 Apache.txt를 찾습니다.
     std::optional<std::filesystem::path> FindApacheModelPath()
     {
         std::vector<std::filesystem::path> candidates =
@@ -158,7 +150,6 @@ namespace
         return std::nullopt;
     }
 
-    // 계층 프레임의 부모/월드 변환과 이름을 저장합니다.
     struct ApacheFrameState
     {
         int indent = 0;
@@ -167,7 +158,7 @@ namespace
         std::string name;
     };
 
-    // GPU 리소스를 만들기 전 CPU에서 보관하는 Apache 파트 데이터입니다.
+    // GPU 리소스를 만들기 전 CPU에서 보관하는 Apache 파트 데이터
     struct ApacheCpuPart
     {
         std::string name;
@@ -178,7 +169,7 @@ namespace
         bool hasColor = false;
     };
 
-    // 머티리얼이 뒤에 나오므로 메시 데이터를 잠시 보관합니다.
+    // 메시 데이터 임시 보관용
     struct PendingApacheMesh
     {
         bool active = false;
@@ -207,14 +198,13 @@ namespace
 
 void AssignmentGame::CreateMesh(MeshResource& mesh, const std::vector<Vertex>& vertices, const std::vector<std::uint32_t>& indices, D3D12_PRIMITIVE_TOPOLOGY topology)
 {
-    // 비어 있는 메시가 들어오면 렌더 단계에서 건너뛸 수 있도록 리소스를 초기화합니다.
+    // 비어 있는 메시가 들어오면 렌더 단계에서 건너뛸 수 있도록 리소스를 초기화
     if (vertices.empty() || indices.empty())
     {
         mesh = {};
         return;
     }
 
-    // 정점 버퍼와 인덱스 버퍼는 과제 규모에 맞춰 업로드 힙에 직접 보관합니다.
     const UINT vertexBufferSize = static_cast<UINT>(vertices.size() * sizeof(Vertex));
     const UINT indexBufferSize = static_cast<UINT>(indices.size() * sizeof(std::uint32_t));
 
@@ -247,7 +237,6 @@ void AssignmentGame::CreateMesh(MeshResource& mesh, const std::vector<Vertex>& v
 
 bool AssignmentGame::CreateApacheMesh()
 {
-    // Apache 모델 파일을 찾지 못하면 임시 박스 헬리콥터를 계속 사용합니다.
     m_apacheParts.clear();
     const std::optional<std::filesystem::path> modelPath = FindApacheModelPath();
     if (!modelPath)
@@ -260,7 +249,6 @@ bool AssignmentGame::CreateApacheMesh()
 
 bool AssignmentGame::LoadApacheModelFile(const std::wstring& filePath)
 {
-    // Apache.txt는 긴 한 줄 데이터가 많으므로 라인 단위로 읽고 필요한 태그만 파싱합니다.
     std::ifstream file{ std::filesystem::path(filePath) };
     if (!file)
     {
@@ -274,7 +262,6 @@ bool AssignmentGame::LoadApacheModelFile(const std::wstring& filePath)
     std::vector<ApacheFrameState> frameStack;
     PendingApacheMesh pendingMesh;
 
-    // 머티리얼 색상이 확인된 메시를 CPU 파트 목록에 추가합니다.
     auto flushPendingMesh = [&]()
     {
         if (!pendingMesh.active)
@@ -466,7 +453,7 @@ bool AssignmentGame::LoadApacheModelFile(const std::wstring& filePath)
         return false;
     }
 
-    // 전체 Apache 모델의 중심을 구해 각 파트 정점을 같은 모델 로컬 좌표계에 둡니다.
+    // Apache 모델의 중심 구하기 / 각 파트 정점을 같은 모델 로컬 좌표계로
     XMFLOAT3 modelMin{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
     XMFLOAT3 modelMax{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
     for (const ApacheCpuPart& part : cpuParts)

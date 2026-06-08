@@ -14,10 +14,9 @@ using namespace DirectX;
 
 namespace
 {
-    // 하이트맵 파일 이름입니다.
     constexpr const wchar_t* HeightMapFileName = L"Cheongsando.png";
 
-    // CPU에서 사용하는 하이트맵 샘플 배열입니다.
+    // 하이트맵 배열
     struct HeightMapData
     {
         UINT width = 0;
@@ -25,7 +24,6 @@ namespace
         std::vector<float> samples;
     };
 
-    // 실행 파일 위치를 기준으로 텍스처 파일을 찾기 위한 디렉터리를 얻습니다.
     std::filesystem::path ExecutableDirectory()
     {
         std::array<wchar_t, MAX_PATH> modulePath{};
@@ -37,7 +35,6 @@ namespace
         return std::filesystem::path(modulePath.data()).parent_path();
     }
 
-    // Visual Studio 실행과 빌드 출력 실행을 모두 고려해 하이트맵 경로를 찾습니다.
     std::optional<std::filesystem::path> FindHeightMapPath()
     {
         std::vector<std::filesystem::path> candidates =
@@ -144,7 +141,6 @@ namespace
         return data;
     }
 
-    // 하이트맵 샘플을 경계 안에서 안전하게 가져옵니다.
     float HeightSample(const HeightMapData& data, int x, int z)
     {
         const int clampedX = std::clamp(x, 0, static_cast<int>(data.width) - 1);
@@ -152,7 +148,7 @@ namespace
         return (GP_TERRAIN_BASE_HEIGHT_OFFSET_METERS + data.samples[static_cast<std::size_t>(clampedZ) * data.width + clampedX] * GP_HEIGHTMAP_MAX_HEIGHT_METERS) * GP_WORLD_UNITS_PER_METER;
     }
 
-    // 높이 차이로부터 지형 노멀을 계산합니다.
+    // 지형 노멀 계산
     XMFLOAT3 TerrainNormalAt(const HeightMapData& data, int x, int z)
     {
         const float left = HeightSample(data, x - 1, z);
@@ -167,7 +163,7 @@ namespace
         return normal;
     }
 
-    // 높이에 따라 초지/암석 느낌의 기본 정점 색상을 만듭니다.
+    // 높이에 따른 정점 색상
     XMFLOAT4 TerrainColor(float normalizedHeight)
     {
         const float grass = std::clamp(1.0f - normalizedHeight * 1.2f, 0.0f, 1.0f);
@@ -185,7 +181,7 @@ namespace
 
 void AssignmentGame::CreateMeshResources()
 {
-    // 큐브는 모든 임시 헬리콥터, 글씨, 탄환, 표적의 기본 도형입니다.
+    // 기본 도형인 큐브 정의
     const XMFLOAT4 white{ 1.0f, 1.0f, 1.0f, 1.0f };
     std::vector<Vertex> cubeVertices =
     {
@@ -209,7 +205,7 @@ void AssignmentGame::CreateMeshResources()
 
     CreateMesh(m_meshes[static_cast<std::size_t>(MeshType::Cube)], cubeVertices, cubeIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // 하이트맵 이미지의 픽셀 수를 그대로 지형 정점 수로 사용합니다.
+    // 하이트맵 이미지의 픽셀 수를 지형 정점 수로 그대로 사용
     const std::optional<HeightMapData> heightMap = LoadHeightMap();
     const UINT terrainWidth = heightMap ? heightMap->width : GP_TERRAIN_GRID_VERTEX_COUNT;
     const UINT terrainLength = heightMap ? heightMap->height : GP_TERRAIN_GRID_VERTEX_COUNT;
@@ -265,6 +261,5 @@ void AssignmentGame::CreateMeshResources()
 
     CreateMesh(m_meshes[static_cast<std::size_t>(MeshType::Terrain)], terrainVertices, terrainIndices, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    // Apache.txt 모델은 별도 텍스트 로더로 읽고, 실패하면 기존 박스 헬리콥터를 대체 표시로 유지합니다.
     m_apacheModelLoaded = CreateApacheMesh();
 }

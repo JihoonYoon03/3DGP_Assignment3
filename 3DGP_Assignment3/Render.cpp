@@ -1,4 +1,4 @@
-#include "GameFramework.h"
+﻿#include "GameFramework.h"
 
 #include <d3dcompiler.h>
 
@@ -13,10 +13,8 @@ using namespace DirectX;
 
 namespace
 {
-    // 런타임에서 읽을 기본 HLSL 파일 이름입니다.
     constexpr const wchar_t* DefaultShaderFileName = L"Default.hlsl";
 
-    // 실행 파일이 있는 폴더를 기준으로 셰이더 후보 경로를 만들 때 사용합니다.
     std::filesystem::path ExecutableDirectory()
     {
         std::array<wchar_t, MAX_PATH> modulePath{};
@@ -29,7 +27,6 @@ namespace
         return std::filesystem::path(modulePath.data()).parent_path();
     }
 
-    // Visual Studio 실행, 솔루션 루트 실행, 빌드 출력 폴더 실행을 모두 고려해 셰이더 파일을 찾습니다.
     std::optional<std::filesystem::path> FindDefaultShaderPath()
     {
         std::vector<std::filesystem::path> candidates =
@@ -64,7 +61,6 @@ namespace
 
 void AssignmentGame::CreatePipelineState()
 {
-    // 루트 시그니처는 객체별 상수 버퍼 하나만 셰이더에 전달합니다.
     D3D12_ROOT_PARAMETER rootParameter{};
     rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParameter.Descriptor.ShaderRegister = 0;
@@ -84,12 +80,11 @@ void AssignmentGame::CreatePipelineState()
     ThrowIfFailed(m_device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature)));
 
     UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+
 #if defined(_DEBUG)
-    // Debug 빌드에서는 셰이더 디버깅 정보를 남깁니다.
     compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-    // 셰이더는 별도 HLSL 파일에서 읽어와 정점/픽셀 엔트리 포인트를 각각 컴파일합니다.
     const std::optional<std::filesystem::path> shaderPath = FindDefaultShaderPath();
     if (!shaderPath)
     {
@@ -101,7 +96,7 @@ void AssignmentGame::CreatePipelineState()
     ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorBlob));
     ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorBlob));
 
-    // 정점 입력 레이아웃은 위치, 색상, 노멀 세 요소로 구성됩니다.
+    // 입력 레이아웃
     D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -109,7 +104,6 @@ void AssignmentGame::CreatePipelineState()
         { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 28, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
     };
 
-    // 래스터라이저는 지형 스트립의 양면을 모두 볼 수 있게 컬링을 끕니다.
     D3D12_RASTERIZER_DESC rasterizerDesc{};
     rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
     rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
@@ -123,7 +117,6 @@ void AssignmentGame::CreatePipelineState()
     rasterizerDesc.ForcedSampleCount = 0;
     rasterizerDesc.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
 
-    // 블렌딩은 사용하지 않고 색상을 그대로 씁니다.
     D3D12_BLEND_DESC blendDesc{};
     blendDesc.AlphaToCoverageEnable = FALSE;
     blendDesc.IndependentBlendEnable = FALSE;
@@ -138,14 +131,12 @@ void AssignmentGame::CreatePipelineState()
     blendDesc.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
     blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-    // 깊이 테스트를 켜서 3D 객체가 올바른 순서로 보이게 합니다.
     D3D12_DEPTH_STENCIL_DESC depthStencilDesc{};
     depthStencilDesc.DepthEnable = TRUE;
     depthStencilDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     depthStencilDesc.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     depthStencilDesc.StencilEnable = FALSE;
 
-    // 그래픽 파이프라인 상태 객체는 셰이더와 렌더 상태를 하나로 묶습니다.
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
     psoDesc.InputLayout = { inputElementDescs, _countof(inputElementDescs) };
     psoDesc.pRootSignature = m_rootSignature.Get();
@@ -165,21 +156,20 @@ void AssignmentGame::CreatePipelineState()
 
 void AssignmentGame::Render()
 {
-    // 현재 씬의 DrawItem 목록을 만든 뒤 씬에 맞는 카메라를 선택합니다.
     BuildDrawItems();
 
+    // 씬에 맞는 카메라를 선택
     const XMMATRIX view =
         (m_scene == SceneMode::Level1)
         ? LevelViewMatrix()
         : XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -8.5f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     const XMMATRIX viewProjection = view * ProjectionMatrix();
 
-    // 명령 목록을 기록하고 GPU에 제출합니다.
+    // 명령 목록을 기록 후 GPU에 제출
     PopulateCommandList(viewProjection);
     ID3D12CommandList* commandLists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
 
-    // 수직 동기화 1로 Present하여 과제 실행 중 화면 찢김을 줄입니다.
     ThrowIfFailed(m_swapChain->Present(1, 0));
     WaitForGpu();
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -187,18 +177,17 @@ void AssignmentGame::Render()
 
 void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
 {
-    // 이전 프레임이 끝난 뒤 같은 할당자를 재사용합니다.
+    // 이전 프레임 끝난 뒤 같은 할당자를 재사용
     ThrowIfFailed(m_commandAllocator->Reset());
     ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()));
 
-    // 현재 객체들의 상수 버퍼를 먼저 채웁니다.
     UploadObjectConstants(viewProjection);
 
-    // 현재 백 버퍼를 렌더 타깃 상태로 전환합니다.
+    // 현재 백 버퍼를 렌더 타깃 상태로 전환
     const D3D12_RESOURCE_BARRIER toRenderTarget = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_commandList->ResourceBarrier(1, &toRenderTarget);
 
-    // 렌더링 상태와 출력 버퍼를 설정합니다.
+    // 렌더링 상태와 출력 버퍼 설정
     m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
     m_commandList->RSSetViewports(1, &m_viewport);
     m_commandList->RSSetScissorRects(1, &m_scissorRect);
@@ -208,13 +197,12 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
     m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
-    // 씬별 배경색은 시작/메뉴와 Level-1을 구분하기 위해 다르게 둡니다.
+    // 씬 별 배경색은 구분 목적으로 다르게 설정
     const float clearColorStart[4] = { 0.03f, 0.05f, 0.09f, 1.0f };
     const float clearColorLevel[4] = { 0.38f, 0.55f, 0.78f, 1.0f };
     m_commandList->ClearRenderTargetView(rtvHandle, (m_scene == SceneMode::Level1) ? clearColorLevel : clearColorStart, 0, nullptr);
     m_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-    // 모든 렌더 항목을 메시 종류에 맞게 그립니다.
     const UINT constantBufferStride = AlignConstantBufferSize(sizeof(ObjectConstants));
     for (std::size_t itemIndex = 0; itemIndex < m_drawItems.size(); ++itemIndex)
     {
@@ -231,7 +219,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
 
         if (mesh->indexCount == 0 || !mesh->vertexBuffer || !mesh->indexBuffer)
         {
-            // 모델 파일을 찾지 못한 메시 항목은 앱을 중단하지 않고 건너뜁니다.
+            // 모델 파일을 찾지 못 한 경우 스킵
             continue;
         }
 
@@ -242,7 +230,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
         m_commandList->DrawIndexedInstanced(mesh->indexCount, 1, 0, 0, 0);
     }
 
-    // 백 버퍼를 다시 Present 상태로 돌려 화면에 표시할 준비를 합니다.
+    // 백 버퍼를 다시 Present 상태로 전환해 화면 표시 준비
     const D3D12_RESOURCE_BARRIER toPresent = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     m_commandList->ResourceBarrier(1, &toPresent);
     ThrowIfFailed(m_commandList->Close());
@@ -250,7 +238,6 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
 
 void AssignmentGame::UploadObjectConstants(const XMMATRIX& viewProjection)
 {
-    // DrawItem 수가 상수 버퍼 한도를 넘으면 앞쪽 항목만 안전하게 업로드합니다.
     if (m_drawItems.size() > MaxDrawItems)
     {
         m_drawItems.resize(MaxDrawItems);
