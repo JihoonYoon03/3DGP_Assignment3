@@ -168,7 +168,12 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Models\Apache.txt" />
-    <None Include="Shaders\Default.hlsl" />
+    <FxCompile Include="Shaders\Default.hlsl">
+      <FileType>Document</FileType>
+      <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VSMain</EntryPointName>
+      <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+    </FxCompile>
     <None Include="Textures\Cheongsando.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
