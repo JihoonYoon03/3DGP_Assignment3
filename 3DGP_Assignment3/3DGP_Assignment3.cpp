@@ -3,7 +3,7 @@
 
 #include "framework.h"
 #include "3DGP_Assignment3.h"
-#include "GameFramework.h"
+#include "AssignmentGame.h"
 
 #include <windowsx.h>
 

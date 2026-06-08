@@ -1,4 +1,4 @@
-﻿#include "GameFramework.h"
+﻿#include "AssignmentGame.h"
 
 #include "Collision.h"
 
@@ -261,8 +261,8 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
     }
 
     // 지형 바깥으로 너무 멀리 나가지 않도록 위치 제한
-    const float movementLimitX = std::max(5.0f, (m_terrainHalfWidth > 0.0f ? m_terrainHalfWidth : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
-    const float movementLimitZ = std::max(5.0f, (m_terrainHalfLength > 0.0f ? m_terrainHalfLength : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
+    const float movementLimitX = std::max(5.0f, (m_terrain.HalfWidth() > 0.0f ? m_terrain.HalfWidth() : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
+    const float movementLimitZ = std::max(5.0f, (m_terrain.HalfLength() > 0.0f ? m_terrain.HalfLength() : GP_TERRAIN_HALF_SIZE_METERS) - 8.0f);
     m_helicopterPosition.x = std::clamp(m_helicopterPosition.x, -movementLimitX, movementLimitX);
     m_helicopterPosition.z = std::clamp(m_helicopterPosition.z, -movementLimitZ, movementLimitZ);
 
@@ -423,7 +423,7 @@ void AssignmentGame::UpdateLevel(float deltaSeconds)
 void AssignmentGame::UpdateAimRay()
 {
     // 헬리콥터 총구에서 광선 발사
-    const float maxAimDistance = std::max({ GP_TERRAIN_HALF_SIZE_METERS, m_terrainHalfWidth, m_terrainHalfLength }) * 2.0f;
+    const float maxAimDistance = std::max({ GP_TERRAIN_HALF_SIZE_METERS, m_terrain.HalfWidth(), m_terrain.HalfLength() }) * 2.0f;
     m_aimDirection = ForwardDirection();
     const Collision::Ray ray{ MuzzlePosition(), m_aimDirection };
 
@@ -993,8 +993,8 @@ void AssignmentGame::ResetLevel()
         };
     };
 
-    const float usableHalfX = std::max(80.0f * GP_WORLD_UNITS_PER_METER, (m_terrainHalfWidth > 0.0f ? m_terrainHalfWidth : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
-    const float usableHalfZ = std::max(120.0f * GP_WORLD_UNITS_PER_METER, (m_terrainHalfLength > 0.0f ? m_terrainHalfLength : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
+    const float usableHalfX = std::max(80.0f * GP_WORLD_UNITS_PER_METER, (m_terrain.HalfWidth() > 0.0f ? m_terrain.HalfWidth() : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
+    const float usableHalfZ = std::max(120.0f * GP_WORLD_UNITS_PER_METER, (m_terrain.HalfLength() > 0.0f ? m_terrain.HalfLength() : GP_TERRAIN_HALF_SIZE_METERS) - 24.0f * GP_WORLD_UNITS_PER_METER);
     m_helicopterPosition = placeOnTerrain(0.0f, -usableHalfZ * 0.45f, GP_PLAYER_TERRAIN_CLEARANCE_METERS);
     m_helicopterYaw = 0.0f;
     m_helicopterPitch = 0.0f;
@@ -1044,37 +1044,7 @@ float AssignmentGame::ScreenConstantScaleAt(const XMFLOAT3& position, float scal
 
 float AssignmentGame::TerrainHeightAt(float worldX, float worldZ) const
 {
-    if (m_terrainHeights.empty() || m_terrainWidth < 2 || m_terrainLength < 2)
-    {
-        return 0.0f;
-    }
-
-    const float localX = (worldX + m_terrainHalfWidth) / m_terrainCellX;
-    const float localZ = (worldZ + m_terrainHalfLength) / m_terrainCellZ;
-    if (localX < 0.0f || localZ < 0.0f || localX > static_cast<float>(m_terrainWidth - 1) || localZ > static_cast<float>(m_terrainLength - 1))
-    {
-        return 0.0f;
-    }
-
-    const int x0 = static_cast<int>(std::floor(localX));
-    const int z0 = static_cast<int>(std::floor(localZ));
-    const int x1 = std::min(x0 + 1, static_cast<int>(m_terrainWidth) - 1);
-    const int z1 = std::min(z0 + 1, static_cast<int>(m_terrainLength) - 1);
-    const float tx = localX - static_cast<float>(x0);
-    const float tz = localZ - static_cast<float>(z0);
-
-    const auto sample = [this](int x, int z)
-    {
-        return m_terrainHeights[static_cast<std::size_t>(z) * m_terrainWidth + x];
-    };
-
-    const float h00 = sample(x0, z0);
-    const float h10 = sample(x1, z0);
-    const float h01 = sample(x0, z1);
-    const float h11 = sample(x1, z1);
-    const float h0 = h00 + (h10 - h00) * tx;
-    const float h1 = h01 + (h11 - h01) * tx;
-    return h0 + (h1 - h0) * tz;
+    return m_terrain.HeightAt(worldX, worldZ);
 }
 
 bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance, Collision::HitResult& hit, float heightOffset) const
@@ -1085,7 +1055,7 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
         return false;
     }
 
-    if (m_terrainHeights.empty())
+    if (m_terrain.Empty())
     {
         hit = Collision::RaycastPlaneY(ray, heightOffset, maxDistance);
         if (hit.hit)
@@ -1097,12 +1067,7 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
 
     const auto isInsideTerrain = [this](float worldX, float worldZ)
     {
-        const float localX = (worldX + m_terrainHalfWidth) / m_terrainCellX;
-        const float localZ = (worldZ + m_terrainHalfLength) / m_terrainCellZ;
-        return localX >= 0.0f &&
-            localZ >= 0.0f &&
-            localX <= static_cast<float>(m_terrainWidth - 1) &&
-            localZ <= static_cast<float>(m_terrainLength - 1);
+        return m_terrain.Contains(worldX, worldZ);
     };
 
     const auto sampleDelta = [this, heightOffset, &isInsideTerrain](const XMFLOAT3& point, float& delta)
@@ -1116,7 +1081,7 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
         return true;
     };
 
-    const float step = std::max(0.35f, std::min(m_terrainCellX, m_terrainCellZ) * 0.5f);
+    const float step = std::max(0.35f, std::min(m_terrain.CellX(), m_terrain.CellZ()) * 0.5f);
     float previousDistance = 0.0f;
     XMFLOAT3 previousPoint = ray.origin;
     float previousDelta = 0.0f;
@@ -1192,13 +1157,7 @@ bool AssignmentGame::RaycastTerrain(const Collision::Ray& ray, float maxDistance
 
 XMFLOAT3 AssignmentGame::LevelCameraPosition() const
 {
-    const XMFLOAT3 flatForward{ std::sinf(m_helicopterYaw), 0.0f, std::cosf(m_helicopterYaw) };
-    return
-    {
-        m_helicopterPosition.x - flatForward.x * 7.0f,
-        m_helicopterPosition.y + 4.0f,
-        m_helicopterPosition.z - flatForward.z * 7.0f
-    };
+    return m_camera.LevelCameraPosition(m_helicopterPosition, m_helicopterYaw);
 }
 
 XMFLOAT3 AssignmentGame::ForwardDirection() const

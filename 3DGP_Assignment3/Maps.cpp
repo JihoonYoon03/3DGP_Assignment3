@@ -1,4 +1,4 @@
-﻿#include "GameFramework.h"
+﻿#include "AssignmentGame.h"
 
 #include <algorithm>
 #include <array>
@@ -214,14 +214,7 @@ void AssignmentGame::CreateMeshResources()
     const float halfWidth = static_cast<float>(terrainWidth - 1) * cellX * 0.5f;
     const float halfLength = static_cast<float>(terrainLength - 1) * cellZ * 0.5f;
 
-    m_terrainWidth = terrainWidth;
-    m_terrainLength = terrainLength;
-    m_terrainCellX = cellX;
-    m_terrainCellZ = cellZ;
-    m_terrainHalfWidth = halfWidth;
-    m_terrainHalfLength = halfLength;
-    m_terrainHeights.clear();
-    m_terrainHeights.reserve(static_cast<std::size_t>(terrainWidth) * terrainLength);
+    m_terrain.Reset(terrainWidth, terrainLength, cellX, cellZ, halfWidth, halfLength);
 
     std::vector<Vertex> terrainVertices;
     terrainVertices.reserve(static_cast<std::size_t>(terrainWidth) * terrainLength);
@@ -235,7 +228,7 @@ void AssignmentGame::CreateMeshResources()
             const float height = heightMap ? (GP_TERRAIN_BASE_HEIGHT_OFFSET_METERS + normalizedHeight * GP_HEIGHTMAP_MAX_HEIGHT_METERS) * GP_WORLD_UNITS_PER_METER : 0.0f;
             const XMFLOAT3 normal = heightMap ? TerrainNormalAt(*heightMap, static_cast<int>(x), static_cast<int>(z)) : XMFLOAT3{ 0.0f, 1.0f, 0.0f };
             const XMFLOAT4 color = heightMap ? TerrainColor(normalizedHeight) : XMFLOAT4{ 0.16f, 0.45f, 0.18f, 1.0f };
-            m_terrainHeights.push_back(height);
+            m_terrain.PushHeight(height);
             terrainVertices.push_back({ { worldX, height, worldZ }, color, normal });
         }
     }
