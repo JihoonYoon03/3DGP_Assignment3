@@ -93,10 +93,10 @@ void AssignmentGame::CreatePipelineState()
 
     ComPtr<ID3DBlob> vertexShader;
     ComPtr<ID3DBlob> pixelShader;
-    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errorBlob));
-    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errorBlob));
+    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "VSMain", "vs_5_1", compileFlags, 0, &vertexShader, &errorBlob));
+    ThrowIfFailed(D3DCompileFromFile(shaderPath->c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "PSMain", "ps_5_1", compileFlags, 0, &pixelShader, &errorBlob));
 
-    // 입력 레이아웃
+    // �Է� ���̾ƿ�
     D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -158,14 +158,14 @@ void AssignmentGame::Render()
 {
     BuildDrawItems();
 
-    // 씬에 맞는 카메라를 선택
+    // ���� �´� ī�޶� ����
     const XMMATRIX view =
         (m_scene == SceneMode::Level1)
         ? LevelViewMatrix()
         : XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -8.5f, 1.0f), XMVectorZero(), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     const XMMATRIX viewProjection = view * ProjectionMatrix();
 
-    // 명령 목록을 기록 후 GPU에 제출
+    // ��� ����� ��� �� GPU�� ����
     PopulateCommandList(viewProjection);
     ID3D12CommandList* commandLists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
@@ -177,17 +177,17 @@ void AssignmentGame::Render()
 
 void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
 {
-    // 이전 프레임 끝난 뒤 같은 할당자를 재사용
+    // ���� ������ ���� �� ���� �Ҵ��ڸ� ����
     ThrowIfFailed(m_commandAllocator->Reset());
     ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()));
 
     UploadObjectConstants(viewProjection);
 
-    // 현재 백 버퍼를 렌더 타깃 상태로 전환
+    // ���� �� ���۸� ���� Ÿ�� ���·� ��ȯ
     const D3D12_RESOURCE_BARRIER toRenderTarget = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     m_commandList->ResourceBarrier(1, &toRenderTarget);
 
-    // 렌더링 상태와 출력 버퍼 설정
+    // ������ ���¿� ��� ���� ����
     m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
     m_commandList->RSSetViewports(1, &m_viewport);
     m_commandList->RSSetScissorRects(1, &m_scissorRect);
@@ -197,7 +197,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
     m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
-    // 씬 별 배경색은 구분 목적으로 다르게 설정
+    // �� �� ������ ���� �������� �ٸ��� ����
     const float clearColorStart[4] = { 0.03f, 0.05f, 0.09f, 1.0f };
     const float clearColorLevel[4] = { 0.38f, 0.55f, 0.78f, 1.0f };
     m_commandList->ClearRenderTargetView(rtvHandle, (m_scene == SceneMode::Level1) ? clearColorLevel : clearColorStart, 0, nullptr);
@@ -219,7 +219,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
 
         if (mesh->indexCount == 0 || !mesh->vertexBuffer || !mesh->indexBuffer)
         {
-            // 모델 파일을 찾지 못 한 경우 스킵
+            // �� ������ ã�� �� �� ��� ��ŵ
             continue;
         }
 
@@ -230,7 +230,7 @@ void AssignmentGame::PopulateCommandList(const XMMATRIX& viewProjection)
         m_commandList->DrawIndexedInstanced(mesh->indexCount, 1, 0, 0, 0);
     }
 
-    // 백 버퍼를 다시 Present 상태로 전환해 화면 표시 준비
+    // �� ���۸� �ٽ� Present ���·� ��ȯ�� ȭ�� ǥ�� �غ�
     const D3D12_RESOURCE_BARRIER toPresent = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     m_commandList->ResourceBarrier(1, &toPresent);
     ThrowIfFailed(m_commandList->Close());

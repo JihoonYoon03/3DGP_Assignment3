@@ -68,9 +68,6 @@
     <ClCompile Include="Camera.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
-    <ClCompile Include="D3DDevice.cpp" />
-    <ClCompile Include="D3DRender.cpp" />
-    <ClCompile Include="D3DUtility.cpp" />
     <ClCompile Include="GameFramework.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
@@ -81,6 +78,15 @@
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="Mesh.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="Device.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="Render.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="Utility.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
@@ -101,11 +107,13 @@
     <None Include="Models\Apache.txt">
       <Filter>Models</Filter>
     </None>
-    <None Include="Shaders\Default.hlsl">
-      <Filter>Shaders</Filter>
-    </None>
     <None Include="Textures\Cheongsando.png">
       <Filter>Textures</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Shaders\Default.hlsl">
+      <Filter>Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>
